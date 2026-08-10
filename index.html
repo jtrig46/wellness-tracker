@@ -11,6 +11,7 @@
 <title>Jason's Wellness Tracker</title>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root {
@@ -558,6 +559,7 @@ const TRAINER_EMAILS = [];                            // add trainer email(s) he
 
 firebase.initializeApp(FIREBASE_CONFIG);
 const auth = firebase.auth();
+const db = firebase.firestore();
 
 let currentRole = null;  // 'owner' | 'trainer' | null
 
@@ -578,9 +580,19 @@ const AT = {
     body: 'tblQRokocyaq2kuid',
     meals: 'tblRvvwepUEhz864h',
   },
-  get token() { return localStorage.getItem('at_token'); },
-  set token(v) { localStorage.setItem('at_token', v); },
+  _token: null,
+  get token() { return this._token || localStorage.getItem('at_token'); },
+  set token(v) { this._token = v; if (v) localStorage.setItem('at_token', v); },
 };
+
+// Firestore helpers for Airtable token
+async function saveTokenToFirestore(token) {
+  await db.collection('config').doc('airtable').set({ token }, { merge: true });
+}
+async function getTokenFromFirestore() {
+  const doc = await db.collection('config').doc('airtable').get();
+  return doc.exists ? doc.data().token : null;
+}
 
 // ============================================================
 // AIRTABLE API LAYER
@@ -1010,12 +1022,33 @@ auth.onAuthStateChanged(async (user) => {
     roleBadge.className = 'user-role owner';
   }
 
-  // Check Airtable token
+  // Fetch Airtable token from Firestore (falls back to localStorage)
+  try {
+    const cloudToken = await getTokenFromFirestore();
+    if (cloudToken) {
+      AT.token = cloudToken;
+      startApp();
+      return;
+    }
+  } catch (e) {
+    // Firestore not set up yet or permission denied - fall through
+    console.log('Firestore token fetch failed, checking localStorage:', e.message);
+  }
+
   if (AT.token) {
+    // Have it locally but not in Firestore yet - migrate it
+    if (role === 'owner') {
+      try { await saveTokenToFirestore(AT.token); } catch (e) { /* ok */ }
+    }
     startApp();
-  } else {
-    // Show token setup
+  } else if (role === 'owner') {
+    // First-time setup: owner enters token
     setupScreen.classList.remove('hidden');
+  } else {
+    // Trainer but no token exists yet - owner needs to set up first
+    authScreen.classList.remove('hidden');
+    authDenied.innerHTML = '<p>The app hasn\'t been connected to Airtable yet. Ask Jason to sign in first to complete setup.</p>';
+    authDenied.classList.remove('hidden');
   }
 });
 
@@ -1031,6 +1064,8 @@ setupBtn.addEventListener('click', async () => {
   try {
     AT.token = tokenInput.value.trim();
     await atFetch(AT.tables.body, { pageSize: 1 });
+    // Save to Firestore so trainer (and other devices) get it automatically
+    try { await saveTokenToFirestore(AT.token); } catch (e) { console.log('Could not save token to cloud:', e.message); }
     setupScreen.classList.add('hidden');
     startApp();
   } catch (e) {
@@ -1060,6 +1095,7 @@ function showSettings() {
     auth.signOut().then(() => location.reload());
   } else if (c === 'reset' && currentRole === 'owner') {
     localStorage.removeItem('at_token');
+    try { db.collection('config').doc('airtable').delete(); } catch (e) { /* ok */ }
     auth.signOut().then(() => location.reload());
   }
 }
