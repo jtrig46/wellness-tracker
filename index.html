@@ -542,12 +542,12 @@ body.trainer-mode .owner-only { display: none !important; }
 // FIREBASE CONFIG  (fill these in from your Firebase console)
 // ============================================================
 const FIREBASE_CONFIG = {
-  apiKey:            'YOUR_API_KEY',
-  authDomain:        'YOUR_PROJECT.firebaseapp.com',
-  projectId:         'YOUR_PROJECT',
-  storageBucket:     'YOUR_PROJECT.appspot.com',
-  messagingSenderId: 'YOUR_SENDER_ID',
-  appId:             'YOUR_APP_ID',
+  apiKey:            'AIzaSyCpzo5CA89zbWxWyZ6bBIAikj6234eqwrE',
+  authDomain:        'wellness-tracker-3d346.firebaseapp.com',
+  projectId:         'wellness-tracker-3d346',
+  storageBucket:     'wellness-tracker-3d346.firebasestorage.app',
+  messagingSenderId: '662807949569',
+  appId:             '1:662807949569:web:41ffa65a4b6c5d6623ab00',
 };
 
 // ============================================================
@@ -924,25 +924,50 @@ const authDenied = document.getElementById('authDenied');
 const roleBadge = document.getElementById('roleBadge');
 
 // ---- Google Sign-In ----
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
 async function signInWithGoogle() {
   const btn = document.getElementById('googleSignInBtn');
   btn.disabled = true;
   authStatus.textContent = 'Signing in...';
   authStatus.classList.remove('hidden');
   authDenied.classList.add('hidden');
-  try {
-    const provider = new firebase.auth.GoogleAuthProvider();
-    await auth.signInWithPopup(provider);
-    // onAuthStateChanged handles the rest
-  } catch (e) {
-    if (e.code !== 'auth/popup-closed-by-user') {
-      authStatus.textContent = 'Sign-in failed. Please try again.';
-    } else {
-      authStatus.classList.add('hidden');
+
+  const provider = new firebase.auth.GoogleAuthProvider();
+
+  if (isMobile || window.matchMedia('(display-mode: standalone)').matches) {
+    // Redirect flow works on mobile and installed PWAs
+    auth.signInWithRedirect(provider);
+  } else {
+    try {
+      await auth.signInWithPopup(provider);
+    } catch (e) {
+      if (e.code === 'auth/popup-blocked') {
+        // Fall back to redirect if popup is blocked
+        auth.signInWithRedirect(provider);
+        return;
+      }
+      if (e.code !== 'auth/popup-closed-by-user') {
+        authStatus.textContent = 'Sign-in failed. Please try again.';
+      } else {
+        authStatus.classList.add('hidden');
+      }
+      btn.disabled = false;
     }
-    btn.disabled = false;
   }
 }
+
+// Handle redirect result on page load (for mobile / PWA sign-in)
+auth.getRedirectResult().then((result) => {
+  // onAuthStateChanged picks up the user; nothing extra needed here
+}).catch((e) => {
+  if (e.code && e.code !== 'auth/popup-closed-by-user') {
+    authStatus.textContent = 'Sign-in failed. Please try again.';
+    authStatus.classList.remove('hidden');
+    const btn = document.getElementById('googleSignInBtn');
+    if (btn) btn.disabled = false;
+  }
+});
 
 // ---- Auth State Listener ----
 auth.onAuthStateChanged(async (user) => {
