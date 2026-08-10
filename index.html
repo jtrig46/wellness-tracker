@@ -562,8 +562,9 @@ const auth = firebase.auth();
 let currentRole = null;  // 'owner' | 'trainer' | null
 
 function getRole(email) {
-  if (email === OWNER_EMAIL) return 'owner';
-  if (TRAINER_EMAILS.includes(email)) return 'trainer';
+  const e = (email || '').toLowerCase();
+  if (e === OWNER_EMAIL.toLowerCase()) return 'owner';
+  if (TRAINER_EMAILS.some(t => t.toLowerCase() === e)) return 'trainer';
   return null;
 }
 
@@ -983,13 +984,14 @@ auth.onAuthStateChanged(async (user) => {
 
   const role = getRole(user.email);
   if (!role) {
-    // Not authorized
+    // Not authorized - show which email was tried
     authScreen.classList.remove('hidden');
     authStatus.classList.add('hidden');
+    authDenied.innerHTML = '<p>Signed in as <strong>' + user.email + '</strong>, but this account doesn\'t have access. Try signing in with your yerbacrew.com account instead.</p>';
     authDenied.classList.remove('hidden');
     document.getElementById('googleSignInBtn').disabled = false;
     // Sign them out so they can try a different account
-    setTimeout(() => auth.signOut(), 3000);
+    setTimeout(() => auth.signOut(), 5000);
     return;
   }
 
