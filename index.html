@@ -383,6 +383,7 @@ body.trainer-mode .owner-only { display: none !important; }
     Sign in with Google
   </button>
   <div id="authStatus" class="auth-status hidden"></div>
+  <p style="font-size:0.75rem;color:var(--muted);margin-top:20px;max-width:300px;">Using Brave? You may need to lower Shields for this site so Google sign-in works.</p>
   <div id="authDenied" class="auth-denied hidden">
     <p>Your account doesn't have access to this app. Ask Jason to add you.</p>
   </div>
@@ -937,8 +938,6 @@ const authDenied = document.getElementById('authDenied');
 const roleBadge = document.getElementById('roleBadge');
 
 // ---- Google Sign-In ----
-const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-
 async function signInWithGoogle() {
   const btn = document.getElementById('googleSignInBtn');
   btn.disabled = true;
@@ -948,34 +947,34 @@ async function signInWithGoogle() {
 
   const provider = new firebase.auth.GoogleAuthProvider();
 
-  if (isMobile || window.matchMedia('(display-mode: standalone)').matches) {
-    // Redirect flow works on mobile and installed PWAs
-    auth.signInWithRedirect(provider);
-  } else {
-    try {
-      await auth.signInWithPopup(provider);
-    } catch (e) {
-      if (e.code === 'auth/popup-blocked') {
-        // Fall back to redirect if popup is blocked
-        auth.signInWithRedirect(provider);
-        return;
-      }
-      if (e.code !== 'auth/popup-closed-by-user') {
-        authStatus.textContent = 'Sign-in failed. Please try again.';
-      } else {
-        authStatus.classList.add('hidden');
-      }
-      btn.disabled = false;
+  try {
+    // Always try popup first (works on mobile too when user-initiated)
+    await auth.signInWithPopup(provider);
+  } catch (e) {
+    if (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment') {
+      // Fall back to redirect only if popup is truly blocked
+      authStatus.textContent = 'Opening sign-in page...';
+      auth.signInWithRedirect(provider);
+      return;
     }
+    if (e.code !== 'auth/popup-closed-by-user') {
+      authStatus.textContent = 'Sign-in error: ' + (e.code || e.message) + '. If using Brave, try lowering Shields for this site.';
+    } else {
+      authStatus.classList.add('hidden');
+    }
+    btn.disabled = false;
   }
 }
 
-// Handle redirect result on page load (for mobile / PWA sign-in)
+// Handle redirect result on page load (fallback for when popup was blocked)
 auth.getRedirectResult().then((result) => {
-  // onAuthStateChanged picks up the user; nothing extra needed here
+  if (result && result.user) {
+    authStatus.textContent = 'Signed in, loading...';
+    authStatus.classList.remove('hidden');
+  }
 }).catch((e) => {
   if (e.code && e.code !== 'auth/popup-closed-by-user') {
-    authStatus.textContent = 'Sign-in failed. Please try again.';
+    authStatus.textContent = 'Sign-in error: ' + (e.code || e.message);
     authStatus.classList.remove('hidden');
     const btn = document.getElementById('googleSignInBtn');
     if (btn) btn.disabled = false;
