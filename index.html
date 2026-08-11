@@ -738,6 +738,49 @@ body.trainer-mode .owner-only { display: none !important; }
       <div id="foodLibList"></div>
     </div>
 
+    <!-- Recipe library -->
+    <div class="card">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <span>Recipe library</span>
+        <button class="btn-secondary owner-only" onclick="toggleAddRecipe()" style="font-size:0.75rem;padding:5px 10px">+ Add</button>
+      </div>
+      <div class="card hidden owner-only" id="addRecipeCard" style="box-shadow:none;margin:0">
+        <div class="add-form">
+          <div class="form-row">
+            <label class="form-label">Name</label>
+            <input type="text" class="form-input" id="recName" placeholder="e.g. Salmon with quinoa and broccoli">
+          </div>
+          <div class="form-row">
+            <label class="form-label">Slot</label>
+            <select class="form-input" id="recSlot">
+              <option>Breakfast</option>
+              <option>Snack</option>
+              <option>Lunch</option>
+              <option>Dinner</option>
+              <option>Drink</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label class="form-label">Calories (optional)</label>
+            <input type="number" class="form-input" id="recCals" placeholder="500">
+          </div>
+          <div class="form-row">
+            <label class="form-label">Ingredients (one per line)</label>
+            <textarea class="form-input" id="recIngredients" rows="5" style="font-family:inherit;resize:vertical" placeholder="6 oz salmon&#10;3/4 cup quinoa&#10;1 cup broccoli"></textarea>
+          </div>
+          <div class="form-row">
+            <label class="form-label">Steps (optional)</label>
+            <textarea class="form-input" id="recSteps" rows="3" style="font-family:inherit;resize:vertical" placeholder="How to make it"></textarea>
+          </div>
+          <div class="form-actions">
+            <button class="btn-secondary" onclick="toggleAddRecipe()">Cancel</button>
+            <button class="btn-primary" id="saveRecipeBtn" onclick="saveRecipe()">Save recipe</button>
+          </div>
+        </div>
+      </div>
+      <div id="recipeLibList"></div>
+    </div>
+
     <div class="card" id="groceryCard">
       <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
         <span>Weekly grocery run</span>
@@ -993,6 +1036,7 @@ const AT = {
     exerciseLib: 'tbl9hpnEgXyGFiT2K',
     workoutGroups: 'tblSibZ7BT7KCx82r',
     groceryExtras: 'tblAgbk5Vy86hk8oF',
+    recipes: 'tblnxDwT8zBz7lS9D',
     weeklyPlan: 'tblsT9fE1mmBSAW48',
     rewards: 'tblSpV3vhrVkVf4xQ',
     trips: 'tbltsZezA5Npw03K4',
@@ -1074,6 +1118,7 @@ const cache = {
   painLogs: [],      // [{id, when, point, context}]
   winLogs: [],       // [{id, when, win}]
   foods: [],         // [{id, name, slots, cals, prepped, favorite, notes}]
+  recipes: [],       // [{id, name, slot, calories, ingredients:[...], steps, favorite}]  meal definitions
   exercises: [],     // [{id, name, category, unit, qty, slots, points, painPoints, equipment, howto, favorite}]
   workoutGroups: [], // [{id, name, exercises:[name,...]}]  saved workout groupings
   groceryExtras: [], // [{id, item, checked}]  manual grocery items (staples)
@@ -1219,6 +1264,24 @@ async function loadGroceryExtras() {
     cache.groceryExtras.sort((a, b) => (a.item || '').localeCompare(b.item || ''));
   } catch (e) {
     console.error('Failed to load grocery extras:', e);
+  }
+}
+
+async function loadRecipes() {
+  try {
+    const data = await atFetch(AT.tables.recipes, { pageSize: 100 });
+    cache.recipes = data.records.map(r => ({
+      id: r.id,
+      name: r.fields['Name'] || '',
+      slot: r.fields['Slot'] || '',
+      calories: r.fields['Calories'] != null ? r.fields['Calories'] : null,
+      ingredients: (r.fields['Ingredients'] || '').split('\n').map(s => s.trim()).filter(Boolean),
+      steps: r.fields['Steps'] || '',
+      favorite: r.fields['Favorite'] || false,
+    }));
+    cache.recipes.sort((a, b) => (b.favorite - a.favorite) || a.name.localeCompare(b.name));
+  } catch (e) {
+    console.error('Failed to load recipes:', e);
   }
 }
 
@@ -2598,6 +2661,107 @@ function renderGroceryExtras() {
 }
 
 // ============================================================
+// RECIPE LIBRARY (meal definitions)
+// ============================================================
+let editingRecipeId = null;
+
+function resetRecipeForm() {
+  editingRecipeId = null;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  set('recName', ''); set('recSlot', 'Breakfast'); set('recCals', '');
+  set('recIngredients', ''); set('recSteps', '');
+  const btn = document.getElementById('saveRecipeBtn');
+  if (btn) btn.textContent = 'Save recipe';
+}
+
+function toggleAddRecipe() {
+  document.getElementById('addRecipeCard').classList.toggle('hidden');
+  resetRecipeForm();
+}
+
+function editRecipe(id) {
+  if (currentRole === 'trainer') return;
+  const r = cache.recipes.find(x => x.id === id);
+  if (!r) return;
+  const card = document.getElementById('addRecipeCard');
+  if (card) card.classList.remove('hidden');
+  editingRecipeId = id;
+  const set = (elid, v) => { const el = document.getElementById(elid); if (el) el.value = v; };
+  set('recName', r.name || '');
+  set('recSlot', r.slot || 'Breakfast');
+  set('recCals', r.calories != null ? r.calories : '');
+  set('recIngredients', (r.ingredients || []).join('\n'));
+  set('recSteps', r.steps || '');
+  const btn = document.getElementById('saveRecipeBtn');
+  if (btn) btn.textContent = 'Update recipe';
+  if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function saveRecipe() {
+  if (currentRole === 'trainer') return;
+  const btn = document.getElementById('saveRecipeBtn');
+  const name = document.getElementById('recName').value.trim();
+  const slot = document.getElementById('recSlot').value;
+  const calories = parseInt(document.getElementById('recCals').value) || null;
+  const ingredients = document.getElementById('recIngredients').value.split('\n').map(s => s.trim()).filter(Boolean);
+  const steps = document.getElementById('recSteps').value.trim();
+  if (!name) { alert('Give the recipe a name.'); return; }
+  const isEdit = !!editingRecipeId;
+  const editId = editingRecipeId;
+  btn.disabled = true; btn.textContent = isEdit ? 'Updating...' : 'Saving...';
+  try {
+    const fields = { 'Name': name, 'Slot': slot, 'Calories': calories, 'Ingredients': ingredients.join('\n'), 'Steps': steps };
+    if (isEdit) {
+      await atUpdate(AT.tables.recipes, editId, fields);
+      const r = cache.recipes.find(x => x.id === editId);
+      if (r) { r.name = name; r.slot = slot; r.calories = calories; r.ingredients = ingredients; r.steps = steps; }
+    } else {
+      const result = await atCreate(AT.tables.recipes, fields);
+      cache.recipes.push({ id: result.records[0].id, name, slot, calories, ingredients, steps, favorite: false });
+    }
+    cache.recipes.sort((a, b) => (b.favorite - a.favorite) || a.name.localeCompare(b.name));
+    toggleAddRecipe();
+    renderRecipes();
+  } catch (e) {
+    alert(isEdit ? 'Could not update the recipe.' : 'Could not save the recipe.'); console.error(e);
+    btn.textContent = isEdit ? 'Update recipe' : 'Save recipe';
+  } finally { btn.disabled = false; }
+}
+
+async function deleteRecipe(id) {
+  if (currentRole === 'trainer') return;
+  const r = cache.recipes.find(x => x.id === id);
+  if (!r) return;
+  if (!confirm(`Delete the "${r.name}" recipe? This won't change days you've already planned.`)) return;
+  try {
+    await atDelete(AT.tables.recipes, id);
+    cache.recipes = cache.recipes.filter(x => x.id !== id);
+    renderRecipes();
+  } catch (e) { alert('Could not delete the recipe.'); console.error(e); }
+}
+
+function renderRecipes() {
+  const list = document.getElementById('recipeLibList');
+  if (!list) return;
+  if (!cache.recipes.length) {
+    list.innerHTML = '<div class="ql-empty">No recipes yet. Add meals you cook regularly.</div>';
+    return;
+  }
+  list.innerHTML = cache.recipes.map(r => {
+    const meta = [r.slot, r.calories ? r.calories + ' cal' : '', r.ingredients.length + ' ingredient' + (r.ingredients.length === 1 ? '' : 's')].filter(Boolean).join(' · ');
+    return `
+    <div class="lib-item">
+      <div class="lib-info">
+        <div class="lib-name">${r.favorite ? '⭐ ' : ''}${r.name}</div>
+        <div class="lib-meta">${meta}</div>
+      </div>
+      <button class="wg-edit owner-only" onclick="editRecipe('${r.id}')" title="Edit recipe">Edit</button>
+      <button class="extra-del owner-only" onclick="deleteRecipe('${r.id}')" title="Remove">&times;</button>
+    </div>`;
+  }).join('');
+}
+
+// ============================================================
 // POINTS + REWARDS
 // ============================================================
 async function redeemReward(name, cost) {
@@ -3178,7 +3342,7 @@ async function startApp() {
   currentWeekOffset = Math.max(0, Math.floor(diffDays / 7));
 
   // Load data from Airtable
-  await Promise.all([loadWorkoutLogs(), loadBodyLogs(), loadMealLogs(), loadPainWinLogs(), loadLibraries(), loadWorkoutGroups(), loadGroceryExtras(), loadPlan(), loadPoints(), loadTrips()]);
+  await Promise.all([loadWorkoutLogs(), loadBodyLogs(), loadMealLogs(), loadPainWinLogs(), loadLibraries(), loadWorkoutGroups(), loadGroceryExtras(), loadRecipes(), loadPlan(), loadPoints(), loadTrips()]);
 
   const today = new Date().getDay();
   renderPhases();
@@ -3191,6 +3355,7 @@ async function startApp() {
   renderQuickLog();
   renderFoodLibrary();
   renderExerciseLibrary();
+  renderRecipes();
   renderPlan(today);
   renderGrocery();
   renderRewards();
