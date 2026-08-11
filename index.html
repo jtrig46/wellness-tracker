@@ -348,6 +348,11 @@ body.trainer-mode .owner-only { display: none !important; }
 .wg-group:last-child { border-bottom: none; }
 .wg-group-head { display: flex; align-items: center; gap: 10px; }
 .wg-group-name { flex: 1; font-size: 0.9375rem; font-weight: 700; }
+.wg-edit {
+  background: none; border: none; color: var(--accent); font-size: 0.75rem; font-weight: 600;
+  cursor: pointer; padding: 2px 6px; font-family: inherit; flex-shrink: 0;
+}
+.wg-edit:hover { text-decoration: underline; }
 .wg-group-ex { font-size: 0.75rem; color: var(--muted); margin: 6px 0 10px; line-height: 1.5; }
 .wg-add-row { display: flex; gap: 8px; align-items: center; }
 .wg-add-row select { flex: 1; }
@@ -2227,20 +2232,45 @@ function renderPlan(dayIdx) {
 // ============================================================
 // SAVED WORKOUTS (grouped exercises)
 // ============================================================
-let groupBuilder = [];  // exercise names being assembled into a new workout
+let groupBuilder = [];    // exercise names being assembled into a new/edited workout
+let editingGroupId = null; // id of the workout being edited, or null when creating
+
+// Reset the builder card to a clean "new workout" state and hide it.
+function resetGroupBuilder() {
+  editingGroupId = null;
+  groupBuilder = [];
+  const nameEl = document.getElementById('wgName');
+  if (nameEl) nameEl.value = '';
+  const btn = document.getElementById('saveWorkoutGroupBtn');
+  if (btn) btn.textContent = 'Save workout';
+  renderGroupBuilder();
+}
 
 function toggleAddWorkoutGroup() {
   const card = document.getElementById('addWorkoutGroupCard');
   if (!card) return;
   const opening = card.classList.contains('hidden');
   card.classList.toggle('hidden');
-  if (opening) {
-    // Fresh start each time the builder opens.
-    groupBuilder = [];
-    const nameEl = document.getElementById('wgName');
-    if (nameEl) nameEl.value = '';
-    renderGroupBuilder();
-  }
+  // Whether opening fresh via "+ New" or closing via Cancel, return to a
+  // clean new-workout state (an in-progress edit is discarded).
+  resetGroupBuilder();
+}
+
+// Load an existing workout into the builder for editing.
+function editWorkoutGroup(id) {
+  if (currentRole === 'trainer') return;
+  const g = cache.workoutGroups.find(x => x.id === id);
+  if (!g) return;
+  const card = document.getElementById('addWorkoutGroupCard');
+  if (card) card.classList.remove('hidden');
+  editingGroupId = id;
+  groupBuilder = [...g.exercises];
+  const nameEl = document.getElementById('wgName');
+  if (nameEl) nameEl.value = g.name;
+  const btn = document.getElementById('saveWorkoutGroupBtn');
+  if (btn) btn.textContent = 'Update workout';
+  renderGroupBuilder();
+  if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 function addExToGroupBuilder() {
@@ -2273,18 +2303,27 @@ async function saveWorkoutGroup() {
   const name = document.getElementById('wgName').value.trim();
   if (!name) { alert('Give the workout a name.'); return; }
   if (!groupBuilder.length) { alert('Add at least one exercise to the workout.'); return; }
-  btn.disabled = true; btn.textContent = 'Saving...';
+  const isEdit = !!editingGroupId;
+  const editId = editingGroupId;
+  const exercises = [...groupBuilder];
+  btn.disabled = true; btn.textContent = isEdit ? 'Updating...' : 'Saving...';
   try {
-    const fields = { 'Name': name, 'Exercises': groupBuilder.join('\n') };
-    const result = await atCreate(AT.tables.workoutGroups, fields);
-    cache.workoutGroups.push({ id: result.records[0].id, name, exercises: [...groupBuilder] });
+    const fields = { 'Name': name, 'Exercises': exercises.join('\n') };
+    if (isEdit) {
+      await atUpdate(AT.tables.workoutGroups, editId, fields);
+      const g = cache.workoutGroups.find(x => x.id === editId);
+      if (g) { g.name = name; g.exercises = exercises; }
+    } else {
+      const result = await atCreate(AT.tables.workoutGroups, fields);
+      cache.workoutGroups.push({ id: result.records[0].id, name, exercises });
+    }
     cache.workoutGroups.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    groupBuilder = [];
-    toggleAddWorkoutGroup();
+    toggleAddWorkoutGroup();  // closes the card and resets builder state
     renderWorkoutGroups();
   } catch (e) {
-    alert('Could not save the workout.'); console.error(e);
-  } finally { btn.disabled = false; btn.textContent = 'Save workout'; }
+    alert(isEdit ? 'Could not update the workout.' : 'Could not save the workout.'); console.error(e);
+    btn.textContent = isEdit ? 'Update workout' : 'Save workout';
+  } finally { btn.disabled = false; }
 }
 
 async function deleteWorkoutGroup(id) {
@@ -2335,6 +2374,7 @@ function renderWorkoutGroups() {
     return `<div class="wg-group">
       <div class="wg-group-head">
         <div class="wg-group-name">${g.name}</div>
+        <button class="wg-edit owner-only" onclick="editWorkoutGroup('${g.id}')" title="Edit workout">Edit</button>
         <button class="extra-del owner-only" onclick="deleteWorkoutGroup('${g.id}')" title="Delete workout">&times;</button>
       </div>
       <div class="wg-group-ex">${exList}</div>
