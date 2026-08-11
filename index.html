@@ -2100,8 +2100,44 @@ function renderFoodLibrary() {
 // ============================================================
 // EXERCISE LIBRARY
 // ============================================================
+let editingExerciseId = null; // id of the exercise being edited, or null when adding
+
+// Return the add/edit form to a clean "new exercise" state.
+function resetExerciseForm() {
+  editingExerciseId = null;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  set('exName', ''); set('exQty', '');
+  set('exCategory', 'NEAT / daily movement');
+  set('exUnit', 'Reps'); set('exSlot', 'Any'); set('exPain', 'None');
+  const btn = document.getElementById('saveExerciseBtn');
+  if (btn) btn.textContent = 'Save exercise';
+}
+
 function toggleAddExercise() {
   document.getElementById('addExerciseCard').classList.toggle('hidden');
+  // Whether opening via "+ Add" or closing via Cancel, drop any in-progress edit.
+  resetExerciseForm();
+}
+
+// Load an existing exercise into the form for editing.
+function editExercise(id) {
+  if (currentRole === 'trainer') return;
+  const x = cache.exercises.find(e => e.id === id);
+  if (!x) return;
+  const card = document.getElementById('addExerciseCard');
+  if (card) card.classList.remove('hidden');
+  editingExerciseId = id;
+  const set = (elid, v) => { const el = document.getElementById(elid); if (el) el.value = v; };
+  set('exName', x.name || '');
+  set('exCategory', x.category || 'NEAT / daily movement');
+  set('exUnit', x.unit || 'Reps');
+  set('exQty', x.qty != null ? x.qty : '');
+  set('exSlot', (x.slots && x.slots[0]) ? x.slots[0] : 'Any');
+  const pp = (x.painPoints || []).filter(p => p && p !== 'None');
+  set('exPain', pp[0] || 'None');
+  const btn = document.getElementById('saveExerciseBtn');
+  if (btn) btn.textContent = 'Update exercise';
+  if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 async function saveExercise() {
@@ -2114,21 +2150,31 @@ async function saveExercise() {
   const slot = document.getElementById('exSlot').value;
   const painPoint = document.getElementById('exPain').value;
   if (!name) { alert('Give the exercise a name.'); return; }
-  btn.disabled = true; btn.textContent = 'Saving...';
+  const isEdit = !!editingExerciseId;
+  const editId = editingExerciseId;
+  const slots = (slot && slot !== 'Any') ? [slot] : [];
+  const painPoints = (painPoint && painPoint !== 'None') ? [painPoint] : [];
+  btn.disabled = true; btn.textContent = isEdit ? 'Updating...' : 'Saving...';
   try {
-    const fields = { 'Name': name, 'Category': category, 'Unit Type': unit };
-    if (qty) fields['Default Quantity'] = qty;
-    if (slot && slot !== 'Any') fields['Time Slots'] = [slot];
-    if (painPoint && painPoint !== 'None') fields['Pain Points'] = [painPoint];
-    const result = await atCreate(AT.tables.exerciseLib, fields);
-    cache.exercises.push({ id: result.records[0].id, name, category, unit, qty, slots: (slot && slot !== 'Any') ? [slot] : [], painPoints: [painPoint], points: 0, equipment: '', howto: '', favorite: false });
-    document.getElementById('exName').value = '';
-    document.getElementById('exQty').value = '';
-    toggleAddExercise();
+    // Send every field so editing can also clear a value (e.g. remove a slot).
+    const fields = {
+      'Name': name, 'Category': category, 'Unit Type': unit,
+      'Default Quantity': qty, 'Time Slots': slots, 'Pain Points': painPoints,
+    };
+    if (isEdit) {
+      await atUpdate(AT.tables.exerciseLib, editId, fields);
+      const x = cache.exercises.find(e => e.id === editId);
+      if (x) { x.name = name; x.category = category; x.unit = unit; x.qty = qty; x.slots = slots; x.painPoints = painPoints; }
+    } else {
+      const result = await atCreate(AT.tables.exerciseLib, fields);
+      cache.exercises.push({ id: result.records[0].id, name, category, unit, qty, slots, painPoints, points: 0, equipment: '', howto: '', favorite: false });
+    }
+    toggleAddExercise();  // closes the card and resets the form
     renderExerciseLibrary();
   } catch (e) {
-    alert('Could not save the exercise.'); console.error(e);
-  } finally { btn.disabled = false; btn.textContent = 'Save exercise'; }
+    alert(isEdit ? 'Could not update the exercise.' : 'Could not save the exercise.'); console.error(e);
+    btn.textContent = isEdit ? 'Update exercise' : 'Save exercise';
+  } finally { btn.disabled = false; }
 }
 
 async function deleteExercise(id) {
@@ -2156,6 +2202,7 @@ function renderExerciseLibrary() {
         <div class="lib-name">${x.favorite ? '⭐ ' : ''}${x.name}</div>
         <div class="lib-meta">${meta}</div>
       </div>
+      <button class="wg-edit owner-only" onclick="editExercise('${x.id}')" title="Edit exercise">Edit</button>
       <button class="extra-del" onclick="deleteExercise('${x.id}')" title="Remove">&times;</button>
     </div>`;
   }).join('');
