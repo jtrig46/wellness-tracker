@@ -296,6 +296,38 @@ body.trainer-mode .owner-only { display: none !important; }
 .cal-count { font-size: 0.75rem; color: var(--muted); }
 .cal-sub { font-size: 0.75rem; color: var(--text2); margin-top: 8px; }
 .meal-name.checked { text-decoration: line-through; color: var(--muted); }
+
+/* ===== QUICK LOG (pain / win) ===== */
+.ql-btns { display: flex; gap: 8px; }
+.ql-btn {
+  flex: 1; padding: 12px; border-radius: 10px; border: 1.5px solid var(--border);
+  background: var(--card-alt); font-family: inherit; font-size: 0.8125rem; font-weight: 600;
+  cursor: pointer; color: var(--text2);
+}
+.ql-btn.ql-pain:hover { border-color: var(--red); color: var(--red); background: var(--red-wash); }
+.ql-btn.ql-win:hover { border-color: var(--green); color: var(--green); background: var(--green-wash); }
+.ql-empty { font-size: 0.8125rem; color: var(--muted); padding: 8px 0; }
+.ql-entry { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border-light); }
+.ql-entry:last-child { border-bottom: none; }
+.ql-emoji { font-size: 1rem; line-height: 1.4; flex-shrink: 0; }
+.ql-entry-body { flex: 1; }
+.ql-entry-text { font-size: 0.8125rem; color: var(--text); }
+.ql-entry-when { font-size: 0.6875rem; color: var(--muted); margin-top: 2px; }
+
+/* ===== LIBRARY ITEMS (food / exercise) ===== */
+.lib-item { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border-light); }
+.lib-item:last-child { border-bottom: none; }
+.lib-info { flex: 1; min-width: 0; }
+.lib-name { font-size: 0.875rem; font-weight: 600; }
+.lib-meta { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+.lib-tag {
+  font-size: 0.625rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--green); background: var(--green-wash); padding: 1px 6px; border-radius: 4px; margin-left: 4px;
+}
+.lib-log-btn {
+  flex-shrink: 0; padding: 6px 14px; background: var(--accent); color: white; border: none;
+  border-radius: 8px; font-size: 0.75rem; font-weight: 600; cursor: pointer; font-family: inherit;
+}
 .extra-del {
   background: none; border: none; color: var(--muted); font-size: 1.375rem;
   line-height: 1; cursor: pointer; padding: 0 4px; flex-shrink: 0;
@@ -453,6 +485,81 @@ body.trainer-mode .owner-only { display: none !important; }
       <div class="card-header" id="workoutDayHeader"></div>
       <div id="workoutList"></div>
     </div>
+
+    <!-- Pain & Win quick logs -->
+    <div class="card owner-only">
+      <div class="card-header">Quick log</div>
+      <div style="padding:0 16px 16px">
+        <div class="ql-btns">
+          <button class="ql-btn ql-pain" onclick="openQuickLog('pain')">＋ Log pain</button>
+          <button class="ql-btn ql-win" onclick="openQuickLog('win')">＋ Log a win</button>
+        </div>
+        <div id="quickLogForm"></div>
+        <div id="quickLogRecent" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <!-- Exercise library -->
+    <div class="card">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <span>Exercise library</span>
+        <button class="btn-secondary owner-only" onclick="toggleAddExercise()" style="font-size:0.75rem;padding:5px 10px">+ Add</button>
+      </div>
+      <div class="card hidden" id="addExerciseCard" style="box-shadow:none;margin:0">
+        <div class="add-form">
+          <div class="form-row">
+            <label class="form-label">Name</label>
+            <input type="text" class="form-input" id="exName" placeholder="e.g. 90/90 hip switches">
+          </div>
+          <div class="form-row">
+            <label class="form-label">Category</label>
+            <select class="form-input" id="exCategory">
+              <option>NEAT / daily movement</option>
+              <option>Structured workout</option>
+              <option>Posture / sitting</option>
+              <option>Recovery / rolling</option>
+              <option>Meditation</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label class="form-label">Unit</label>
+            <select class="form-input" id="exUnit">
+              <option>Reps</option>
+              <option>Sets</option>
+              <option>Time</option>
+              <option>Distance</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label class="form-label">Default quantity (optional)</label>
+            <input type="number" class="form-input" id="exQty" placeholder="10">
+          </div>
+          <div class="form-row">
+            <label class="form-label">Time slot</label>
+            <select class="form-input" id="exSlot">
+              <option>Any</option>
+              <option>Morning</option>
+              <option>Midday</option>
+              <option>Evening</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label class="form-label">Pain point it helps</label>
+            <select class="form-input" id="exPain">
+              <option>None</option>
+              <option>Left hip / sciatica</option>
+              <option>Neck</option>
+              <option>General</option>
+            </select>
+          </div>
+          <div class="form-actions">
+            <button class="btn-secondary" onclick="toggleAddExercise()">Cancel</button>
+            <button class="btn-primary" id="saveExerciseBtn" onclick="saveExercise()">Save exercise</button>
+          </div>
+        </div>
+      </div>
+      <div id="exerciseLibList"></div>
+    </div>
   </div>
 
   <div class="tab-page" id="page-meals">
@@ -510,6 +617,47 @@ body.trainer-mode .owner-only { display: none !important; }
     <div class="card hidden" id="extrasCard">
       <div class="card-header">Extras logged</div>
       <div id="extrasList"></div>
+    </div>
+
+    <!-- Food library -->
+    <div class="card">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <span>Your food library</span>
+        <button class="btn-secondary owner-only" onclick="toggleAddFood()" style="font-size:0.75rem;padding:5px 10px">+ Add</button>
+      </div>
+      <div class="card hidden" id="addFoodCard" style="box-shadow:none;margin:0">
+        <div class="add-form">
+          <div class="form-row">
+            <label class="form-label">Name</label>
+            <input type="text" class="form-input" id="foodName" placeholder="e.g. Greek yogurt with almonds">
+          </div>
+          <div class="form-row">
+            <label class="form-label">Calories</label>
+            <input type="number" class="form-input" id="foodCals" placeholder="200">
+          </div>
+          <div class="form-row">
+            <label class="form-label">Usual slot</label>
+            <select class="form-input" id="foodSlot">
+              <option>Any</option>
+              <option>Breakfast</option>
+              <option>Morning Snack</option>
+              <option>Lunch</option>
+              <option>Afternoon Snack</option>
+              <option>Dinner</option>
+              <option>Drink</option>
+            </select>
+          </div>
+          <div class="form-row" style="display:flex;align-items:center;gap:8px">
+            <input type="checkbox" id="foodPrepped" style="width:18px;height:18px">
+            <label class="form-label" for="foodPrepped" style="margin:0">Batch-cooked / prepped ahead</label>
+          </div>
+          <div class="form-actions">
+            <button class="btn-secondary" onclick="toggleAddFood()">Cancel</button>
+            <button class="btn-primary" id="saveFoodBtn" onclick="saveFood()">Save food</button>
+          </div>
+        </div>
+      </div>
+      <div id="foodLibList"></div>
     </div>
 
     <div class="card">
@@ -637,6 +785,11 @@ const AT = {
     workouts: 'tbljtfXDNe52GIWQb',
     body: 'tblQRokocyaq2kuid',
     meals: 'tblRvvwepUEhz864h',
+    painLog: 'tblhkEuAV5I2OyUX3',
+    winLog: 'tbl2spDsPHyDEf1qw',
+    painPoints: 'tblbEbNBWwyG0Xjyp',
+    foodLib: 'tblPpAAwaN7xPg6TL',
+    exerciseLib: 'tbl9hpnEgXyGFiT2K',
   },
   _token: null,
   get token() { return this._token || localStorage.getItem('at_token'); },
@@ -699,6 +852,10 @@ const cache = {
   workoutLogs: [],   // [{id, date, workoutId, completed}]
   bodyLogs: [],      // [{id, date, weight, bf, fatMass, leanMass}]
   mealLogs: [],      // [{id, date, slot, what, onPlan, cals}]
+  painLogs: [],      // [{id, when, point, context}]
+  winLogs: [],       // [{id, when, win}]
+  foods: [],         // [{id, name, slots, cals, prepped, favorite, notes}]
+  exercises: [],     // [{id, name, category, unit, qty, slots, points, painPoints, equipment, howto, favorite}]
 };
 
 async function loadWorkoutLogs() {
@@ -758,6 +915,56 @@ async function loadMealLogs() {
     }));
   } catch (e) {
     console.error('Failed to load meal logs:', e);
+  }
+}
+
+async function loadPainWinLogs() {
+  try {
+    const [pain, win] = await Promise.all([
+      atFetch(AT.tables.painLog, { sort: encodeURIComponent('[{"field":"When","direction":"desc"}]'), pageSize: 100 }),
+      atFetch(AT.tables.winLog, { sort: encodeURIComponent('[{"field":"When","direction":"desc"}]'), pageSize: 100 }),
+    ]);
+    cache.painLogs = pain.records.map(r => ({
+      id: r.id, when: r.fields['When'] || '', point: r.fields['Pain Point'] || '', context: r.fields['Context'] || '',
+    }));
+    cache.winLogs = win.records.map(r => ({
+      id: r.id, when: r.fields['When'] || '', win: r.fields['Win'] || '',
+    }));
+  } catch (e) {
+    console.error('Failed to load pain/win logs:', e);
+  }
+}
+
+async function loadLibraries() {
+  try {
+    const [foods, exercises] = await Promise.all([
+      atFetch(AT.tables.foodLib, { pageSize: 100 }),
+      atFetch(AT.tables.exerciseLib, { pageSize: 100 }),
+    ]);
+    cache.foods = foods.records.map(r => ({
+      id: r.id,
+      name: r.fields['Name'] || '',
+      slots: r.fields['Meal Slots'] || [],
+      cals: r.fields['Calories'] || 0,
+      prepped: r.fields['Prepped'] || false,
+      favorite: r.fields['Favorite'] || false,
+      notes: r.fields['Notes'] || '',
+    }));
+    cache.exercises = exercises.records.map(r => ({
+      id: r.id,
+      name: r.fields['Name'] || '',
+      category: r.fields['Category'] || '',
+      unit: r.fields['Unit Type'] || '',
+      qty: r.fields['Default Quantity'] || null,
+      slots: r.fields['Time Slots'] || [],
+      painPoints: r.fields['Pain Points'] || [],
+      points: r.fields['Points'] || 0,
+      equipment: r.fields['Equipment'] || '',
+      howto: r.fields['How-to'] || '',
+      favorite: r.fields['Favorite'] || false,
+    }));
+  } catch (e) {
+    console.error('Failed to load libraries:', e);
   }
 }
 
@@ -1415,6 +1622,272 @@ function toggleAddMeal() {
 }
 
 // ============================================================
+// PAIN + WIN QUICK LOGS
+// ============================================================
+function fmtWhen(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  let h = d.getHours();
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${months[d.getMonth()]} ${d.getDate()}, ${h}:${String(d.getMinutes()).padStart(2,'0')} ${ampm}`;
+}
+
+let quickLogType = null;
+function openQuickLog(type) {
+  if (currentRole === 'trainer') return;
+  quickLogType = (quickLogType === type) ? null : type;
+  const form = document.getElementById('quickLogForm');
+  if (!quickLogType) { form.innerHTML = ''; return; }
+  if (type === 'pain') {
+    form.innerHTML = `
+      <div class="add-form" style="padding:12px 0 0">
+        <div class="form-row">
+          <label class="form-label">Pain point</label>
+          <select class="form-input" id="painPointSel">
+            <option>Left hip / sciatica</option>
+            <option>Neck</option>
+            <option>General</option>
+            <option>Other</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label class="form-label">Context (optional)</label>
+          <input type="text" class="form-input" id="painContext" placeholder="e.g. after sitting all afternoon">
+        </div>
+        <div class="form-actions">
+          <button class="btn-secondary" onclick="openQuickLog('pain')">Cancel</button>
+          <button class="btn-primary" id="savePainBtn" onclick="savePain()">Log pain</button>
+        </div>
+      </div>`;
+  } else {
+    form.innerHTML = `
+      <div class="add-form" style="padding:12px 0 0">
+        <div class="form-row">
+          <label class="form-label">What went well?</label>
+          <input type="text" class="form-input" id="winText" placeholder="e.g. walked 8k steps, no hip pain">
+        </div>
+        <div class="form-actions">
+          <button class="btn-secondary" onclick="openQuickLog('win')">Cancel</button>
+          <button class="btn-primary" id="saveWinBtn" onclick="saveWin()">Log win</button>
+        </div>
+      </div>`;
+  }
+}
+
+async function savePain() {
+  if (currentRole === 'trainer') return;
+  const btn = document.getElementById('savePainBtn');
+  const point = document.getElementById('painPointSel').value;
+  const context = document.getElementById('painContext').value.trim();
+  btn.disabled = true; btn.textContent = 'Saving...';
+  try {
+    const when = new Date().toISOString();
+    const result = await atCreate(AT.tables.painLog, { 'When': when, 'Pain Point': point, 'Context': context });
+    cache.painLogs.unshift({ id: result.records[0].id, when, point, context });
+    quickLogType = null;
+    renderQuickLog();
+  } catch (e) {
+    alert('Could not save. Check your connection.'); console.error(e);
+    btn.disabled = false; btn.textContent = 'Log pain';
+  }
+}
+
+async function saveWin() {
+  if (currentRole === 'trainer') return;
+  const btn = document.getElementById('saveWinBtn');
+  const win = document.getElementById('winText').value.trim();
+  if (!win) { alert('Type what went well.'); return; }
+  btn.disabled = true; btn.textContent = 'Saving...';
+  try {
+    const when = new Date().toISOString();
+    const result = await atCreate(AT.tables.winLog, { 'When': when, 'Win': win });
+    cache.winLogs.unshift({ id: result.records[0].id, when, win });
+    quickLogType = null;
+    renderQuickLog();
+  } catch (e) {
+    alert('Could not save. Check your connection.'); console.error(e);
+    btn.disabled = false; btn.textContent = 'Log win';
+  }
+}
+
+async function deletePainWin(kind, id) {
+  if (currentRole === 'trainer') return;
+  try {
+    const table = kind === 'pain' ? AT.tables.painLog : AT.tables.winLog;
+    await atDelete(table, id);
+    if (kind === 'pain') cache.painLogs = cache.painLogs.filter(l => l.id !== id);
+    else cache.winLogs = cache.winLogs.filter(l => l.id !== id);
+    renderQuickLog();
+  } catch (e) { console.error('Delete failed:', e); }
+}
+
+function renderQuickLog() {
+  const form = document.getElementById('quickLogForm');
+  if (form && !quickLogType) form.innerHTML = '';
+  const recent = document.getElementById('quickLogRecent');
+  if (!recent) return;
+  const cutoff = Date.now() - 7 * 86400000;
+  const entries = [
+    ...cache.painLogs.map(l => ({ kind:'pain', id:l.id, when:l.when, text: l.point + (l.context ? ' — ' + l.context : '') })),
+    ...cache.winLogs.map(l => ({ kind:'win', id:l.id, when:l.when, text: l.win })),
+  ].filter(e => e.when && new Date(e.when).getTime() >= cutoff)
+   .sort((a,b) => new Date(b.when) - new Date(a.when));
+  if (!entries.length) { recent.innerHTML = '<div class="ql-empty">No pain or wins logged in the last 7 days.</div>'; return; }
+  recent.innerHTML = entries.map(e => `
+    <div class="ql-entry">
+      <span class="ql-emoji">${e.kind === 'pain' ? '\u{1F534}' : '\u{1F3C6}'}</span>
+      <div class="ql-entry-body">
+        <div class="ql-entry-text">${e.text}</div>
+        <div class="ql-entry-when">${fmtWhen(e.when)}</div>
+      </div>
+      <button class="extra-del" onclick="deletePainWin('${e.kind}','${e.id}')" title="Remove">&times;</button>
+    </div>
+  `).join('');
+}
+
+// ============================================================
+// FOOD LIBRARY
+// ============================================================
+function toggleAddFood() {
+  document.getElementById('addFoodCard').classList.toggle('hidden');
+}
+
+async function saveFood() {
+  if (currentRole === 'trainer') return;
+  const btn = document.getElementById('saveFoodBtn');
+  const name = document.getElementById('foodName').value.trim();
+  const cals = parseInt(document.getElementById('foodCals').value) || 0;
+  const slotSel = document.getElementById('foodSlot').value;
+  const prepped = document.getElementById('foodPrepped').checked;
+  if (!name) { alert('Give the food a name.'); return; }
+  btn.disabled = true; btn.textContent = 'Saving...';
+  try {
+    const fields = { 'Name': name, 'Calories': cals, 'Prepped': prepped };
+    if (slotSel && slotSel !== 'Any') fields['Meal Slots'] = [slotSel];
+    const result = await atCreate(AT.tables.foodLib, fields);
+    cache.foods.push({ id: result.records[0].id, name, slots: (slotSel && slotSel !== 'Any') ? [slotSel] : [], cals, prepped, favorite: false, notes: '' });
+    document.getElementById('foodName').value = '';
+    document.getElementById('foodCals').value = '';
+    document.getElementById('foodPrepped').checked = false;
+    toggleAddFood();
+    renderFoodLibrary();
+  } catch (e) {
+    alert('Could not save the food.'); console.error(e);
+  } finally { btn.disabled = false; btn.textContent = 'Save food'; }
+}
+
+async function deleteFood(id) {
+  if (currentRole === 'trainer') return;
+  try {
+    await atDelete(AT.tables.foodLib, id);
+    cache.foods = cache.foods.filter(f => f.id !== id);
+    renderFoodLibrary();
+  } catch (e) { console.error('Delete food failed:', e); }
+}
+
+// Log a library food to the currently selected Meals day (off-plan extra).
+async function quickLogFood(id) {
+  if (currentRole === 'trainer') return;
+  const food = cache.foods.find(f => f.id === id);
+  if (!food) return;
+  const slot = (food.slots && food.slots[0]) || 'Afternoon Snack';
+  const dateStr = mealDateStr(selectedMealDay);
+  try {
+    const result = await atCreate(AT.tables.meals, {
+      'Date': dateStr, 'Meal': slot, 'What I Ate': food.name, 'On Plan': false, 'Calories (est)': food.cals || 0,
+    });
+    cache.mealLogs.push({ id: result.records[0].id, date: dateStr, slot, what: food.name, onPlan: false, cals: food.cals || 0 });
+    renderMeals(selectedMealDay);
+  } catch (e) { alert('Could not log that food.'); console.error(e); }
+}
+
+function renderFoodLibrary() {
+  const list = document.getElementById('foodLibList');
+  if (!list) return;
+  if (!cache.foods.length) {
+    list.innerHTML = '<div class="ql-empty">No saved foods yet. Add your go-to meals and snacks to log them in one tap.</div>';
+    return;
+  }
+  const foods = [...cache.foods].sort((a,b) => (b.favorite - a.favorite) || a.name.localeCompare(b.name));
+  list.innerHTML = foods.map(f => `
+    <div class="lib-item">
+      <div class="lib-info">
+        <div class="lib-name">${f.favorite ? '⭐ ' : ''}${f.name}${f.prepped ? ' <span class="lib-tag">prepped</span>' : ''}</div>
+        <div class="lib-meta">${(f.cals||0).toLocaleString()} kcal${f.slots && f.slots.length ? ' · ' + f.slots.join(', ') : ''}</div>
+      </div>
+      <button class="lib-log-btn" onclick="quickLogFood('${f.id}')">Log</button>
+      <button class="extra-del" onclick="deleteFood('${f.id}')" title="Remove">&times;</button>
+    </div>
+  `).join('');
+}
+
+// ============================================================
+// EXERCISE LIBRARY
+// ============================================================
+function toggleAddExercise() {
+  document.getElementById('addExerciseCard').classList.toggle('hidden');
+}
+
+async function saveExercise() {
+  if (currentRole === 'trainer') return;
+  const btn = document.getElementById('saveExerciseBtn');
+  const name = document.getElementById('exName').value.trim();
+  const category = document.getElementById('exCategory').value;
+  const unit = document.getElementById('exUnit').value;
+  const qty = parseInt(document.getElementById('exQty').value) || null;
+  const slot = document.getElementById('exSlot').value;
+  const painPoint = document.getElementById('exPain').value;
+  if (!name) { alert('Give the exercise a name.'); return; }
+  btn.disabled = true; btn.textContent = 'Saving...';
+  try {
+    const fields = { 'Name': name, 'Category': category, 'Unit Type': unit };
+    if (qty) fields['Default Quantity'] = qty;
+    if (slot && slot !== 'Any') fields['Time Slots'] = [slot];
+    if (painPoint && painPoint !== 'None') fields['Pain Points'] = [painPoint];
+    const result = await atCreate(AT.tables.exerciseLib, fields);
+    cache.exercises.push({ id: result.records[0].id, name, category, unit, qty, slots: (slot && slot !== 'Any') ? [slot] : [], painPoints: [painPoint], points: 0, equipment: '', howto: '', favorite: false });
+    document.getElementById('exName').value = '';
+    document.getElementById('exQty').value = '';
+    toggleAddExercise();
+    renderExerciseLibrary();
+  } catch (e) {
+    alert('Could not save the exercise.'); console.error(e);
+  } finally { btn.disabled = false; btn.textContent = 'Save exercise'; }
+}
+
+async function deleteExercise(id) {
+  if (currentRole === 'trainer') return;
+  try {
+    await atDelete(AT.tables.exerciseLib, id);
+    cache.exercises = cache.exercises.filter(x => x.id !== id);
+    renderExerciseLibrary();
+  } catch (e) { console.error('Delete exercise failed:', e); }
+}
+
+function renderExerciseLibrary() {
+  const list = document.getElementById('exerciseLibList');
+  if (!list) return;
+  if (!cache.exercises.length) {
+    list.innerHTML = '<div class="ql-empty">No custom exercises yet. Add moves you want in your rotation.</div>';
+    return;
+  }
+  const ex = [...cache.exercises].sort((a,b) => (b.favorite - a.favorite) || a.name.localeCompare(b.name));
+  list.innerHTML = ex.map(x => {
+    const meta = [x.category, x.qty ? `${x.qty} ${x.unit || ''}`.trim() : x.unit, (x.slots || []).join(', ')].filter(Boolean).join(' · ');
+    return `
+    <div class="lib-item">
+      <div class="lib-info">
+        <div class="lib-name">${x.favorite ? '⭐ ' : ''}${x.name}</div>
+        <div class="lib-meta">${meta}</div>
+      </div>
+      <button class="extra-del" onclick="deleteExercise('${x.id}')" title="Remove">&times;</button>
+    </div>`;
+  }).join('');
+}
+
+// ============================================================
 // RENDERING
 // ============================================================
 function renderPhases() {
@@ -1824,7 +2297,7 @@ async function startApp() {
   currentWeekOffset = Math.max(0, Math.floor(diffDays / 7));
 
   // Load data from Airtable
-  await Promise.all([loadWorkoutLogs(), loadBodyLogs(), loadMealLogs()]);
+  await Promise.all([loadWorkoutLogs(), loadBodyLogs(), loadMealLogs(), loadPainWinLogs(), loadLibraries()]);
 
   const today = new Date().getDay();
   renderPhases();
@@ -1834,6 +2307,9 @@ async function startApp() {
   renderWorkouts(today);
   renderMeals(today);
   renderProgress();
+  renderQuickLog();
+  renderFoodLibrary();
+  renderExerciseLibrary();
 }
 
 // Auth state listener (above) handles showing the right screen on load.
