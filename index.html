@@ -283,10 +283,24 @@ body.trainer-mode .owner-only { display: none !important; }
   background: var(--card-alt);
 }
 .meal-item.open .meal-detail { max-height: 800px; }
-.meal-detail-inner { padding: 0 16px 16px 84px; font-size: 0.8125rem; color: var(--text2); line-height: 1.7; }
+.meal-detail-inner { padding: 0 16px 16px 52px; font-size: 0.8125rem; color: var(--text2); line-height: 1.7; }
 .meal-detail-inner strong { color: var(--text); }
 .ingredient-list { margin: 6px 0; padding-left: 16px; }
 .ingredient-list li { padding: 2px 0; }
+
+/* ===== MEAL LOGGING ===== */
+.cal-summary { padding: 16px; }
+.cal-summary-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.cal-big { font-size: 1.75rem; font-weight: 700; line-height: 1; }
+.cal-big .cal-goal { font-size: 0.875rem; font-weight: 600; color: var(--muted); }
+.cal-count { font-size: 0.75rem; color: var(--muted); }
+.cal-sub { font-size: 0.75rem; color: var(--text2); margin-top: 8px; }
+.meal-name.checked { text-decoration: line-through; color: var(--muted); }
+.extra-del {
+  background: none; border: none; color: var(--muted); font-size: 1.375rem;
+  line-height: 1; cursor: pointer; padding: 0 4px; flex-shrink: 0;
+}
+.extra-del:hover { color: var(--red); }
 
 /* ===== PROGRESS PAGE ===== */
 .hero-stat { text-align: center; padding: 24px 16px 16px; }
@@ -447,14 +461,57 @@ body.trainer-mode .owner-only { display: none !important; }
         <h1>Meals</h1>
         <p>Fuel for the week from your grocery list</p>
       </div>
+      <button class="btn-secondary owner-only" onclick="toggleAddMeal()" id="addMealBtn" style="font-size:0.75rem;padding:6px 12px">+ Log</button>
     </div>
     <div class="card">
       <div class="cal-strip" id="mealCalStrip"></div>
     </div>
+
+    <!-- Today's fuel: running calorie total vs. goal -->
+    <div class="card">
+      <div class="cal-summary" id="mealSummary"></div>
+    </div>
+
+    <!-- Ad hoc meal form (hidden until "+ Log") -->
+    <div class="card hidden" id="addMealCard">
+      <div class="card-header">Log a meal off the plan</div>
+      <div class="add-form">
+        <div class="form-row">
+          <label class="form-label">Slot</label>
+          <select class="form-input" id="adhocSlot">
+            <option>Breakfast</option>
+            <option>Morning Snack</option>
+            <option>Lunch</option>
+            <option>Afternoon Snack</option>
+            <option>Dinner</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label class="form-label">What did you eat?</label>
+          <input type="text" class="form-input" id="adhocWhat" placeholder="e.g. Chipotle chicken bowl">
+        </div>
+        <div class="form-row">
+          <label class="form-label">Calories (est)</label>
+          <input type="number" class="form-input" id="adhocCals" placeholder="600">
+        </div>
+        <div class="form-actions">
+          <button class="btn-secondary" onclick="toggleAddMeal()">Cancel</button>
+          <button class="btn-primary" id="saveMealBtn" onclick="saveAdHocMeal()">Log it</button>
+        </div>
+      </div>
+    </div>
+
     <div class="card" id="mealCard">
       <div class="card-header" id="mealDayHeader"></div>
       <div id="mealList"></div>
     </div>
+
+    <!-- Off-plan extras logged for the selected day -->
+    <div class="card hidden" id="extrasCard">
+      <div class="card-header">Extras logged</div>
+      <div id="extrasList"></div>
+    </div>
+
     <div class="card">
       <div class="card-header">Weekly grocery run</div>
       <div style="padding:0 16px 16px;font-size:0.8125rem;color:var(--text2)">
@@ -641,6 +698,7 @@ async function atDelete(table, recordId) {
 const cache = {
   workoutLogs: [],   // [{id, date, workoutId, completed}]
   bodyLogs: [],      // [{id, date, weight, bf, fatMass, leanMass}]
+  mealLogs: [],      // [{id, date, slot, what, onPlan, cals}]
 };
 
 async function loadWorkoutLogs() {
@@ -680,6 +738,26 @@ async function loadBodyLogs() {
     }));
   } catch (e) {
     console.error('Failed to load body logs:', e);
+  }
+}
+
+async function loadMealLogs() {
+  try {
+    const weekStart = getWeekStart(currentWeekOffset);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 7);
+    const formula = `AND(IS_AFTER({Date}, '${fmtDate(new Date(weekStart.getTime() - 86400000))}'), IS_BEFORE({Date}, '${fmtDate(weekEnd)}'))`;
+    const data = await atFetch(AT.tables.meals, { filterByFormula: formula, pageSize: 100 });
+    cache.mealLogs = data.records.map(r => ({
+      id: r.id,
+      date: r.fields['Date'],
+      slot: r.fields['Meal'] || '',
+      what: r.fields['What I Ate'] || '',
+      onPlan: r.fields['On Plan'] || false,
+      cals: r.fields['Calories (est)'] || 0,
+    }));
+  } catch (e) {
+    console.error('Failed to load meal logs:', e);
   }
 }
 
@@ -880,6 +958,10 @@ const BODY_GOALS = {
     { bf: 21, label: 'Ideal: 21%', benefit: 'Great hormonal balance range, strong cardiovascular markers, and you feel the difference in everything physical.', icon: '⭐' },
   ],
 };
+
+// Daily calorie target for the Meals tab running total.
+// Seeded at 2,000; change this one number to adjust the goal line.
+const DAILY_CALORIE_GOAL = 2000;
 
 // ============================================================
 // STATE
@@ -1224,6 +1306,115 @@ async function saveMeasurement() {
 }
 
 // ============================================================
+// MEAL LOGGING + CALORIE MATH
+// ============================================================
+// The real calendar date for a given day-of-week within the shown week.
+function mealDateStr(dayIdx) {
+  return fmtDate(getDateForDay(getWeekStart(currentWeekOffset), dayIdx));
+}
+
+// Pull an integer calorie count out of a string like "~420".
+function parseCals(v) {
+  return parseInt(String(v).replace(/[^0-9]/g, '')) || 0;
+}
+
+// Map a planned meal's generic time label to a valid Airtable "Meal" option.
+// The daily menu runs Breakfast, Snack, Lunch, Snack, Dinner; the two snacks
+// become Morning Snack / Afternoon Snack so they match the dropdown exactly.
+function plannedSlot(mealTime, snackIndex) {
+  if (mealTime === 'Snack') return snackIndex === 0 ? 'Morning Snack' : 'Afternoon Snack';
+  return mealTime;
+}
+
+// Is a planned meal (that specific slot on that date) already logged?
+function findPlannedLog(dateStr, slot) {
+  return cache.mealLogs.find(l => l.date === dateStr && l.slot === slot && l.onPlan);
+}
+
+// Total calories logged for a date (planned + off-plan extras).
+function getDayCalories(dateStr) {
+  return cache.mealLogs
+    .filter(l => l.date === dateStr)
+    .reduce((sum, l) => sum + (l.cals || 0), 0);
+}
+
+// Check / uncheck a planned meal: create or delete its log record.
+async function togglePlannedMeal(dayIdx, meal, slot) {
+  if (currentRole === 'trainer') return; // view-only
+  const dateStr = mealDateStr(dayIdx);
+  const existing = findPlannedLog(dateStr, slot);
+  if (existing) {
+    try {
+      await atDelete(AT.tables.meals, existing.id);
+      cache.mealLogs = cache.mealLogs.filter(l => l.id !== existing.id);
+    } catch (e) { console.error('Meal un-log failed:', e); }
+  } else {
+    try {
+      const cals = parseCals(meal.cals);
+      const fields = {
+        'Date': dateStr,
+        'Meal': slot,
+        'What I Ate': meal.name,
+        'On Plan': true,
+        'Calories (est)': cals,
+      };
+      const result = await atCreate(AT.tables.meals, fields);
+      const rec = result.records[0];
+      cache.mealLogs.push({ id: rec.id, date: dateStr, slot, what: meal.name, onPlan: true, cals });
+    } catch (e) { console.error('Meal log failed:', e); }
+  }
+}
+
+// Save an ad hoc meal that isn't on the plan.
+async function saveAdHocMeal() {
+  if (currentRole === 'trainer') return;
+  const btn = document.getElementById('saveMealBtn');
+  const slot = document.getElementById('adhocSlot').value;
+  const what = document.getElementById('adhocWhat').value.trim();
+  const cals = parseInt(document.getElementById('adhocCals').value) || 0;
+  if (!what) { alert('Add a short description of what you ate.'); return; }
+  btn.disabled = true;
+  btn.textContent = 'Logging...';
+  try {
+    const dateStr = mealDateStr(selectedMealDay);
+    const fields = {
+      'Date': dateStr,
+      'Meal': slot,
+      'What I Ate': what,
+      'On Plan': false,
+      'Calories (est)': cals,
+    };
+    const result = await atCreate(AT.tables.meals, fields);
+    const rec = result.records[0];
+    cache.mealLogs.push({ id: rec.id, date: dateStr, slot, what, onPlan: false, cals });
+    document.getElementById('adhocWhat').value = '';
+    document.getElementById('adhocCals').value = '';
+    toggleAddMeal();
+    renderMeals(selectedMealDay);
+  } catch (e) {
+    alert('Failed to log the meal. Check your connection.');
+    console.error(e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Log it';
+  }
+}
+
+// Remove any logged meal by record id (used by the extras list).
+async function deleteMealLog(id) {
+  if (currentRole === 'trainer') return;
+  try {
+    await atDelete(AT.tables.meals, id);
+    cache.mealLogs = cache.mealLogs.filter(l => l.id !== id);
+  } catch (e) { console.error('Meal delete failed:', e); }
+}
+
+// Show / hide the ad hoc meal form.
+function toggleAddMeal() {
+  document.getElementById('addMealCard').classList.toggle('hidden');
+}
+
+// ============================================================
 // RENDERING
 // ============================================================
 function renderPhases() {
@@ -1269,9 +1460,10 @@ function renderWeekNav() {
 
 async function changeWeek(dir) {
   currentWeekOffset += dir;
-  await loadWorkoutLogs();
+  await Promise.all([loadWorkoutLogs(), loadMealLogs()]);
   renderWeekNav();
   renderWorkouts(selectedWorkoutDay);
+  renderMeals(selectedMealDay);
   renderXP();
   renderStreak();
 }
@@ -1352,18 +1544,28 @@ function renderWorkouts(dayIdx) {
 function renderMeals(dayIdx) {
   selectedMealDay = dayIdx;
   renderCalStrip('mealCalStrip', dayIdx, d => renderMeals(d));
+  const dateStr = mealDateStr(dayIdx);
   const dayMeals = MEALS[dayIdx];
   document.getElementById('mealDayHeader').textContent = (dayMeals ? dayMeals.label : DAY_FULL[dayIdx]);
+
+  renderMealSummary(dateStr);
+  renderExtras(dayIdx, dateStr);
+
   const list = document.getElementById('mealList');
   list.innerHTML = '';
   if (!dayMeals) { list.innerHTML = '<div style="padding:24px 16px;text-align:center;color:var(--muted)">No plan yet.</div>'; return; }
+
+  let snackCount = 0;
   dayMeals.meals.forEach(m => {
+    const slot = plannedSlot(m.time, m.time === 'Snack' ? snackCount++ : 0);
+    const logged = !!findPlannedLog(dateStr, slot);
     const item = document.createElement('div');
     item.className = 'meal-item';
     item.innerHTML = `
       <div class="meal-head">
+        <div class="workout-check ${logged ? 'done' : ''}"></div>
         <div class="meal-time">${m.time}</div>
-        <div class="meal-name">${m.name}</div>
+        <div class="meal-name ${logged ? 'checked' : ''}">${m.name}</div>
         <div class="meal-cals">${m.cals}</div>
       </div>
       <div class="meal-detail">
@@ -1375,7 +1577,65 @@ function renderMeals(dayIdx) {
         </div>
       </div>
     `;
-    item.querySelector('.meal-head').addEventListener('click', () => item.classList.toggle('open'));
+    const checkEl = item.querySelector('.workout-check');
+    checkEl.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      checkEl.classList.add('saving');
+      await togglePlannedMeal(dayIdx, m, slot);
+      renderMeals(dayIdx);
+    });
+    item.querySelector('.meal-head').addEventListener('click', (e) => {
+      if (e.target.closest('.workout-check')) return;
+      item.classList.toggle('open');
+    });
+    list.appendChild(item);
+  });
+}
+
+// Running calorie total vs. the daily goal.
+function renderMealSummary(dateStr) {
+  const total = getDayCalories(dateStr);
+  const goal = DAILY_CALORIE_GOAL;
+  const count = cache.mealLogs.filter(l => l.date === dateStr).length;
+  const pct = Math.min(100, Math.round((total / goal) * 100));
+  const over = total > goal;
+  let sub;
+  if (total === 0) sub = 'Nothing logged yet. Check off a meal below, or tap + Log for anything off the plan.';
+  else if (over) sub = `${(total - goal).toLocaleString()} over your ${goal.toLocaleString()} goal.`;
+  else sub = `${(goal - total).toLocaleString()} left to reach ${goal.toLocaleString()}.`;
+  document.getElementById('mealSummary').innerHTML = `
+    <div class="cal-summary-top">
+      <div class="cal-big">${total.toLocaleString()} <span class="cal-goal">/ ${goal.toLocaleString()} kcal</span></div>
+      <div class="cal-count">${count} logged</div>
+    </div>
+    <div class="xp-track"><div class="xp-fill" style="width:${pct}%${over ? ';background:var(--orange)' : ''}"></div></div>
+    <div class="cal-sub">${sub}</div>
+  `;
+}
+
+// Off-plan meals logged for the day, each removable.
+function renderExtras(dayIdx, dateStr) {
+  const extras = cache.mealLogs.filter(l => l.date === dateStr && !l.onPlan);
+  const card = document.getElementById('extrasCard');
+  const list = document.getElementById('extrasList');
+  if (!extras.length) { card.classList.add('hidden'); list.innerHTML = ''; return; }
+  card.classList.remove('hidden');
+  list.innerHTML = '';
+  extras.forEach(l => {
+    const item = document.createElement('div');
+    item.className = 'meal-item';
+    item.innerHTML = `
+      <div class="meal-head">
+        <div class="meal-time">${l.slot}</div>
+        <div class="meal-name">${l.what}</div>
+        <div class="meal-cals">${(l.cals || 0).toLocaleString()} kcal</div>
+        <button class="extra-del" title="Remove">&times;</button>
+      </div>
+    `;
+    item.querySelector('.extra-del').addEventListener('click', async () => {
+      await deleteMealLog(l.id);
+      renderMeals(dayIdx);
+    });
     list.appendChild(item);
   });
 }
@@ -1564,7 +1824,7 @@ async function startApp() {
   currentWeekOffset = Math.max(0, Math.floor(diffDays / 7));
 
   // Load data from Airtable
-  await Promise.all([loadWorkoutLogs(), loadBodyLogs()]);
+  await Promise.all([loadWorkoutLogs(), loadBodyLogs(), loadMealLogs()]);
 
   const today = new Date().getDay();
   renderPhases();
