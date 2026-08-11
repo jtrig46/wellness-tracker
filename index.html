@@ -362,6 +362,15 @@ body.trainer-mode .owner-only { display: none !important; }
   display: inline-block; margin-bottom: 4px;
 }
 
+/* ===== GROCERY LIST ===== */
+.grocery-summary { padding: 4px 16px 8px; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.grocery-item { display: flex; align-items: center; gap: 12px; padding: 9px 16px; border-bottom: 1px solid var(--border-light); cursor: pointer; }
+.grocery-item:last-child { border-bottom: none; }
+.grocery-check { width: 20px; height: 20px; flex-shrink: 0; cursor: pointer; accent-color: var(--accent); }
+.grocery-name { flex: 1; font-size: 0.875rem; }
+.grocery-item.checked .grocery-name { text-decoration: line-through; color: var(--muted); }
+.grocery-count { font-size: 0.625rem; font-weight: 700; color: var(--text2); background: var(--border-light); padding: 1px 7px; border-radius: 10px; flex-shrink: 0; }
+
 /* ===== POINTS + REWARDS ===== */
 .points-hero { text-align: center; padding: 20px 16px 8px; }
 .points-num { font-size: 2.5rem; font-weight: 700; line-height: 1; color: var(--accent); }
@@ -729,11 +738,26 @@ body.trainer-mode .owner-only { display: none !important; }
       <div id="foodLibList"></div>
     </div>
 
-    <div class="card">
-      <div class="card-header">Weekly grocery run</div>
-      <div style="padding:0 16px 16px;font-size:0.8125rem;color:var(--text2)">
-        These meals rotate through your staples. Proteins, produce, and a carb base are the must-haves; snack items and extras fill in around them.
+    <div class="card" id="groceryCard">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <span>Weekly grocery run</span>
+        <button class="btn-secondary owner-only" onclick="resetGroceryChecks()" style="font-size:0.75rem;padding:5px 10px">Reset ticks</button>
       </div>
+      <div style="padding:0 16px 8px;font-size:0.75rem;color:var(--muted)">
+        Pulled from this week's planned meals. Tick items off as you order.
+      </div>
+      <div id="groceryList"></div>
+      <div class="card-header" style="margin-top:4px">Extras</div>
+      <div style="padding:0 16px 8px;font-size:0.75rem;color:var(--muted)">
+        Staples not tied to a meal (oil, coffee, snacks). These stay week to week.
+      </div>
+      <div class="add-form owner-only" style="padding:0 16px 8px">
+        <div style="display:flex;gap:8px">
+          <input type="text" class="form-input" id="groceryExtraInput" placeholder="e.g. Olive oil" style="flex:1" onkeydown="if(event.key==='Enter')addGroceryExtra()">
+          <button class="btn-secondary" type="button" onclick="addGroceryExtra()" style="flex-shrink:0">Add</button>
+        </div>
+      </div>
+      <div id="groceryExtrasList"></div>
     </div>
   </div>
 
@@ -968,6 +992,7 @@ const AT = {
     foodLib: 'tblPpAAwaN7xPg6TL',
     exerciseLib: 'tbl9hpnEgXyGFiT2K',
     workoutGroups: 'tblSibZ7BT7KCx82r',
+    groceryExtras: 'tblAgbk5Vy86hk8oF',
     weeklyPlan: 'tblsT9fE1mmBSAW48',
     rewards: 'tblSpV3vhrVkVf4xQ',
     trips: 'tbltsZezA5Npw03K4',
@@ -1051,6 +1076,7 @@ const cache = {
   foods: [],         // [{id, name, slots, cals, prepped, favorite, notes}]
   exercises: [],     // [{id, name, category, unit, qty, slots, points, painPoints, equipment, howto, favorite}]
   workoutGroups: [], // [{id, name, exercises:[name,...]}]  saved workout groupings
+  groceryExtras: [], // [{id, item, checked}]  manual grocery items (staples)
   plan: [],          // [{id, date, slot, exercise, source, group}]
   rewardsLedger: [], // [{id, date, type, points, reason}]
   points: { earned: 0, redeemed: 0, workoutsDone: 0, winCount: 0, mealsOnPlan: 0 },
@@ -1179,6 +1205,20 @@ async function loadWorkoutGroups() {
     cache.workoutGroups.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   } catch (e) {
     console.error('Failed to load workout groups:', e);
+  }
+}
+
+async function loadGroceryExtras() {
+  try {
+    const data = await atFetch(AT.tables.groceryExtras, { pageSize: 100 });
+    cache.groceryExtras = data.records.map(r => ({
+      id: r.id,
+      item: r.fields['Item'] || '',
+      checked: r.fields['Checked'] || false,
+    }));
+    cache.groceryExtras.sort((a, b) => (a.item || '').localeCompare(b.item || ''));
+  } catch (e) {
+    console.error('Failed to load grocery extras:', e);
   }
 }
 
@@ -2436,6 +2476,128 @@ function renderWorkoutGroups() {
 }
 
 // ============================================================
+// GROCERY LIST (weekly, derived from meals + manual extras)
+// ============================================================
+// Aggregate every ingredient across the week's planned meals into a deduped,
+// counted list. MEALS is a fixed weekly template, so this is the standing
+// week's shopping list until per-week meal editing exists.
+function buildWeekGroceries() {
+  const counts = new Map();  // lowercased name -> { name, count }
+  Object.values(MEALS).forEach(day => {
+    if (!day || !day.meals) return;
+    day.meals.forEach(m => (m.ingredients || []).forEach(ing => {
+      const name = String(ing).trim();
+      const key = name.toLowerCase();
+      if (!key) return;
+      if (!counts.has(key)) counts.set(key, { name, count: 0 });
+      counts.get(key).count++;
+    }));
+  });
+  return [...counts.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Check-off state for the derived list lives in localStorage, keyed by week,
+// so ticks reset naturally each week. (Device-local, unlike the extras.)
+function groceryCheckKey() { return 'gchk:' + fmtDate(getWeekStart(currentWeekOffset)); }
+function getGroceryChecks() {
+  try { return new Set(JSON.parse(localStorage.getItem(groceryCheckKey()) || '[]')); }
+  catch (e) { return new Set(); }
+}
+function toggleGroceryCheck(name) {
+  const set = getGroceryChecks();
+  if (set.has(name)) set.delete(name); else set.add(name);
+  localStorage.setItem(groceryCheckKey(), JSON.stringify([...set]));
+  renderGrocery();
+}
+function resetGroceryChecks() {
+  localStorage.removeItem(groceryCheckKey());
+  renderGrocery();
+}
+
+async function addGroceryExtra() {
+  if (currentRole === 'trainer') return;
+  const input = document.getElementById('groceryExtraInput');
+  const item = input ? input.value.trim() : '';
+  if (!item) return;
+  try {
+    const result = await atCreate(AT.tables.groceryExtras, { 'Item': item, 'Checked': false });
+    cache.groceryExtras.push({ id: result.records[0].id, item, checked: false });
+    cache.groceryExtras.sort((a, b) => (a.item || '').localeCompare(b.item || ''));
+    if (input) input.value = '';
+    renderGroceryExtras();
+  } catch (e) { alert('Could not add that item.'); console.error(e); }
+}
+
+async function toggleGroceryExtra(id, checked) {
+  if (currentRole === 'trainer') { renderGroceryExtras(); return; }
+  const x = cache.groceryExtras.find(e => e.id === id);
+  if (x) x.checked = checked;
+  renderGroceryExtras();
+  try {
+    await atUpdate(AT.tables.groceryExtras, id, { 'Checked': checked });
+  } catch (e) {
+    console.error('Toggle extra failed:', e);
+    if (x) x.checked = !checked;  // revert on failure
+    renderGroceryExtras();
+  }
+}
+
+async function deleteGroceryExtra(id) {
+  if (currentRole === 'trainer') return;
+  try {
+    await atDelete(AT.tables.groceryExtras, id);
+    cache.groceryExtras = cache.groceryExtras.filter(e => e.id !== id);
+    renderGroceryExtras();
+  } catch (e) { alert('Could not remove that item.'); console.error(e); }
+}
+
+function renderGrocery() {
+  const list = document.getElementById('groceryList');
+  if (list) {
+    const items = buildWeekGroceries();
+    const checks = getGroceryChecks();
+    if (!items.length) {
+      list.innerHTML = '<div class="ql-empty" style="padding:12px 16px">No meals in the plan yet, so nothing to buy.</div>';
+    } else {
+      const remaining = items.filter(it => !checks.has(it.name)).length;
+      list.innerHTML =
+        `<div class="grocery-summary">${remaining} of ${items.length} left to get</div>` +
+        items.map((it, i) => `
+        <label class="grocery-item ${checks.has(it.name) ? 'checked' : ''}">
+          <input type="checkbox" class="grocery-check" data-idx="${i}" ${checks.has(it.name) ? 'checked' : ''}>
+          <span class="grocery-name">${it.name}</span>
+          ${it.count > 1 ? `<span class="grocery-count">&times;${it.count}</span>` : ''}
+        </label>`).join('');
+      list.querySelectorAll('.grocery-check').forEach(cb => {
+        cb.addEventListener('change', () => toggleGroceryCheck(items[+cb.dataset.idx].name));
+      });
+    }
+  }
+  renderGroceryExtras();
+}
+
+function renderGroceryExtras() {
+  const el = document.getElementById('groceryExtrasList');
+  if (!el) return;
+  if (!cache.groceryExtras.length) {
+    el.innerHTML = '<div class="ql-empty" style="padding:8px 16px 14px">No extras yet.</div>';
+    return;
+  }
+  el.innerHTML = cache.groceryExtras.map(x => `
+    <div class="grocery-item ${x.checked ? 'checked' : ''}">
+      <input type="checkbox" class="gx-check" data-id="${x.id}" ${x.checked ? 'checked' : ''}>
+      <span class="grocery-name">${x.item}</span>
+      <button class="extra-del owner-only" data-del="${x.id}" title="Remove">&times;</button>
+    </div>`).join('');
+  el.querySelectorAll('.gx-check').forEach(cb => {
+    cb.addEventListener('change', () => toggleGroceryExtra(cb.dataset.id, cb.checked));
+  });
+  el.querySelectorAll('[data-del]').forEach(b => {
+    b.addEventListener('click', () => deleteGroceryExtra(b.dataset.del));
+  });
+}
+
+// ============================================================
 // POINTS + REWARDS
 // ============================================================
 async function redeemReward(name, cost) {
@@ -2654,6 +2816,7 @@ async function changeWeek(dir) {
   renderWorkouts(selectedWorkoutDay);
   renderMeals(selectedMealDay);
   renderPlan(selectedPlanDay);
+  renderGrocery();
   renderXP();
   renderStreak();
 }
@@ -3015,7 +3178,7 @@ async function startApp() {
   currentWeekOffset = Math.max(0, Math.floor(diffDays / 7));
 
   // Load data from Airtable
-  await Promise.all([loadWorkoutLogs(), loadBodyLogs(), loadMealLogs(), loadPainWinLogs(), loadLibraries(), loadWorkoutGroups(), loadPlan(), loadPoints(), loadTrips()]);
+  await Promise.all([loadWorkoutLogs(), loadBodyLogs(), loadMealLogs(), loadPainWinLogs(), loadLibraries(), loadWorkoutGroups(), loadGroceryExtras(), loadPlan(), loadPoints(), loadTrips()]);
 
   const today = new Date().getDay();
   renderPhases();
@@ -3029,6 +3192,7 @@ async function startApp() {
   renderFoodLibrary();
   renderExerciseLibrary();
   renderPlan(today);
+  renderGrocery();
   renderRewards();
   renderTrips();
 }
