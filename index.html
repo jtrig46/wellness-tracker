@@ -371,6 +371,15 @@ body.trainer-mode .owner-only { display: none !important; }
 .grocery-item.checked .grocery-name { text-decoration: line-through; color: var(--muted); }
 .grocery-count { font-size: 0.625rem; font-weight: 700; color: var(--text2); background: var(--border-light); padding: 1px 7px; border-radius: 10px; flex-shrink: 0; }
 
+/* ===== MEAL PLAN EDITING ===== */
+.meal-day-controls { padding: 12px 16px 16px; border-top: 1px solid var(--border-light); }
+.meal-add-row { display: flex; gap: 8px; align-items: center; }
+.meal-add-row select { flex: 1; min-width: 0; }
+.meal-add-row .btn-primary { flex-shrink: 0; }
+.meal-edit-row { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+.meal-edit-row select { flex: 1; min-width: 0; }
+.meal-edit-row .btn-secondary { flex-shrink: 0; font-size: 0.75rem; padding: 6px 10px; }
+
 /* ===== POINTS + REWARDS ===== */
 .points-hero { text-align: center; padding: 20px 16px 8px; }
 .points-num { font-size: 2.5rem; font-weight: 700; line-height: 1; color: var(--accent); }
@@ -1037,6 +1046,7 @@ const AT = {
     workoutGroups: 'tblSibZ7BT7KCx82r',
     groceryExtras: 'tblAgbk5Vy86hk8oF',
     recipes: 'tblnxDwT8zBz7lS9D',
+    mealPlan: 'tbl9padNDWV0kxEwn',
     weeklyPlan: 'tblsT9fE1mmBSAW48',
     rewards: 'tblSpV3vhrVkVf4xQ',
     trips: 'tbltsZezA5Npw03K4',
@@ -1119,6 +1129,7 @@ const cache = {
   winLogs: [],       // [{id, when, win}]
   foods: [],         // [{id, name, slots, cals, prepped, favorite, notes}]
   recipes: [],       // [{id, name, slot, calories, ingredients:[...], steps, favorite}]  meal definitions
+  mealPlan: [],      // [{id, date, slot, meal, calories, ingredients:[...], steps}]  per-date meal overrides
   exercises: [],     // [{id, name, category, unit, qty, slots, points, painPoints, equipment, howto, favorite}]
   workoutGroups: [], // [{id, name, exercises:[name,...]}]  saved workout groupings
   groceryExtras: [], // [{id, item, checked}]  manual grocery items (staples)
@@ -1297,6 +1308,27 @@ async function loadPlan() {
     }));
   } catch (e) {
     console.error('Failed to load plan:', e);
+  }
+}
+
+async function loadMealPlan() {
+  try {
+    const weekStart = getWeekStart(currentWeekOffset);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 7);
+    const formula = `AND(IS_AFTER({Date}, '${fmtDate(new Date(weekStart.getTime() - 86400000))}'), IS_BEFORE({Date}, '${fmtDate(weekEnd)}'))`;
+    const data = await atFetch(AT.tables.mealPlan, { filterByFormula: formula, pageSize: 100 });
+    cache.mealPlan = data.records.map(r => ({
+      id: r.id,
+      date: r.fields['Date'],
+      slot: r.fields['Slot'] || '',
+      meal: r.fields['Meal'] || '',
+      calories: r.fields['Calories'] != null ? r.fields['Calories'] : null,
+      ingredients: (r.fields['Ingredients'] || '').split('\n').map(s => s.trim()).filter(Boolean),
+      steps: r.fields['Steps'] || '',
+    }));
+  } catch (e) {
+    console.error('Failed to load meal plan:', e);
   }
 }
 
@@ -2541,21 +2573,22 @@ function renderWorkoutGroups() {
 // ============================================================
 // GROCERY LIST (weekly, derived from meals + manual extras)
 // ============================================================
-// Aggregate every ingredient across the week's planned meals into a deduped,
-// counted list. MEALS is a fixed weekly template, so this is the standing
-// week's shopping list until per-week meal editing exists.
+// Aggregate every ingredient across the week's effective meals (per-date Meal
+// Plan rows where they exist, otherwise the standing template) into a deduped,
+// counted list. Swapping or editing a day's meals changes this automatically.
 function buildWeekGroceries() {
   const counts = new Map();  // lowercased name -> { name, count }
-  Object.values(MEALS).forEach(day => {
-    if (!day || !day.meals) return;
-    day.meals.forEach(m => (m.ingredients || []).forEach(ing => {
+  for (let dayIdx = 0; dayIdx < 7; dayIdx++) {
+    const dateStr = mealDateStr(dayIdx);
+    const eff = effectiveDayMeals(dateStr, dayIdx);
+    eff.meals.forEach(m => (m.ingredients || []).forEach(ing => {
       const name = String(ing).trim();
       const key = name.toLowerCase();
       if (!key) return;
       if (!counts.has(key)) counts.set(key, { name, count: 0 });
       counts.get(key).count++;
     }));
-  });
+  }
   return [...counts.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -2975,7 +3008,7 @@ function renderWeekNav() {
 
 async function changeWeek(dir) {
   currentWeekOffset += dir;
-  await Promise.all([loadWorkoutLogs(), loadMealLogs(), loadPlan()]);
+  await Promise.all([loadWorkoutLogs(), loadMealLogs(), loadMealPlan(), loadPlan()]);
   renderWeekNav();
   renderWorkouts(selectedWorkoutDay);
   renderMeals(selectedMealDay);
@@ -3059,39 +3092,87 @@ function renderWorkouts(dayIdx) {
   });
 }
 
+const MEAL_PLAN_SLOTS = ['Breakfast', 'Morning Snack', 'Lunch', 'Afternoon Snack', 'Dinner'];
+
+// The meals in effect for a date: explicit Meal Plan rows if any exist for
+// that date, otherwise the standing weekday template. Returns
+// { custom, meals:[{id, slot, name, cals, ingredients, steps}] }.
+function effectiveDayMeals(dateStr, dayIdx) {
+  const rows = cache.mealPlan.filter(p => p.date === dateStr);
+  if (rows.length) {
+    const order = s => { const i = MEAL_PLAN_SLOTS.indexOf(s); return i === -1 ? 99 : i; };
+    const meals = rows.slice()
+      .sort((a, b) => order(a.slot) - order(b.slot))
+      .map(r => ({ id: r.id, slot: r.slot, name: r.meal, cals: r.calories || 0, ingredients: r.ingredients || [], steps: r.steps || '' }));
+    return { custom: true, meals };
+  }
+  const tmpl = MEALS[dayIdx];
+  if (!tmpl) return { custom: false, meals: [] };
+  let snackCount = 0;
+  const meals = tmpl.meals.map(m => ({
+    id: null,
+    slot: plannedSlot(m.time, m.time === 'Snack' ? snackCount++ : 0),
+    name: m.name,
+    cals: parseCals(m.cals),
+    ingredients: m.ingredients || [],
+    steps: m.steps || '',
+  }));
+  return { custom: false, meals };
+}
+
+// Build <option>s for the recipe pickers; marks the recipe matching a name.
+function recipeOptionsHtml(selectedName) {
+  if (!cache.recipes.length) return '<option value="">No recipes yet</option>';
+  return cache.recipes.map(r => {
+    const sel = (selectedName && r.name === selectedName) ? ' selected' : '';
+    return `<option value="${r.id}"${sel}>${r.name}${r.slot ? ' (' + r.slot + ')' : ''}</option>`;
+  }).join('');
+}
+
 function renderMeals(dayIdx) {
   selectedMealDay = dayIdx;
   renderCalStrip('mealCalStrip', dayIdx, d => renderMeals(d));
   const dateStr = mealDateStr(dayIdx);
-  const dayMeals = MEALS[dayIdx];
-  document.getElementById('mealDayHeader').textContent = (dayMeals ? dayMeals.label : DAY_FULL[dayIdx]);
+  const tmpl = MEALS[dayIdx];
+  document.getElementById('mealDayHeader').textContent = (tmpl ? tmpl.label : DAY_FULL[dayIdx]);
 
   renderMealSummary(dateStr);
   renderExtras(dayIdx, dateStr);
 
+  const eff = effectiveDayMeals(dateStr, dayIdx);
+  const isOwner = currentRole !== 'trainer';
   const list = document.getElementById('mealList');
   list.innerHTML = '';
-  if (!dayMeals) { list.innerHTML = '<div style="padding:24px 16px;text-align:center;color:var(--muted)">No plan yet.</div>'; return; }
 
-  let snackCount = 0;
-  dayMeals.meals.forEach(m => {
-    const slot = plannedSlot(m.time, m.time === 'Snack' ? snackCount++ : 0);
-    const logged = !!findPlannedLog(dateStr, slot);
+  if (!eff.meals.length) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'padding:24px 16px;text-align:center;color:var(--muted)';
+    empty.textContent = eff.custom ? 'No meals planned for this day yet.' : 'No plan yet.';
+    list.appendChild(empty);
+  }
+
+  eff.meals.forEach(m => {
+    const logged = !!findPlannedLog(dateStr, m.slot);
     const item = document.createElement('div');
     item.className = 'meal-item';
+    const editRow = (isOwner && eff.custom && m.id) ? `
+          <div class="meal-edit-row">
+            <select class="form-input mp-swap"></select>
+            <button class="btn-secondary mp-swap-btn" type="button">Swap</button>
+            <button class="btn-secondary mp-remove-btn" type="button">Remove</button>
+          </div>` : '';
     item.innerHTML = `
       <div class="meal-head">
         <div class="workout-check ${logged ? 'done' : ''}"></div>
-        <div class="meal-time">${m.time}</div>
+        <div class="meal-time">${m.slot}</div>
         <div class="meal-name ${logged ? 'checked' : ''}">${m.name}</div>
-        <div class="meal-cals">${m.cals}</div>
+        <div class="meal-cals">${m.cals ? m.cals + ' kcal' : ''}</div>
       </div>
       <div class="meal-detail">
         <div class="meal-detail-inner">
-          <strong>Ingredients</strong>
-          <ul class="ingredient-list">${m.ingredients.map(i => `<li>${i}</li>`).join('')}</ul>
-          <strong>How to</strong>
-          <p>${m.steps}</p>
+          ${m.ingredients.length ? `<strong>Ingredients</strong><ul class="ingredient-list">${m.ingredients.map(i => `<li>${i}</li>`).join('')}</ul>` : ''}
+          ${m.steps ? `<strong>How to</strong><p>${m.steps}</p>` : ''}
+          ${editRow}
         </div>
       </div>
     `;
@@ -3099,15 +3180,128 @@ function renderMeals(dayIdx) {
     checkEl.addEventListener('click', async (e) => {
       e.stopPropagation();
       checkEl.classList.add('saving');
-      await togglePlannedMeal(dayIdx, m, slot);
+      await togglePlannedMeal(dayIdx, m, m.slot);
       renderMeals(dayIdx);
     });
     item.querySelector('.meal-head').addEventListener('click', (e) => {
       if (e.target.closest('.workout-check')) return;
       item.classList.toggle('open');
     });
+    if (isOwner && eff.custom && m.id) {
+      const sel = item.querySelector('.mp-swap');
+      if (sel) sel.innerHTML = recipeOptionsHtml(m.name);
+      const swapBtn = item.querySelector('.mp-swap-btn');
+      if (swapBtn) swapBtn.addEventListener('click', (e) => { e.stopPropagation(); if (sel && sel.value) swapMeal(m.id, sel.value); });
+      const rmBtn = item.querySelector('.mp-remove-btn');
+      if (rmBtn) rmBtn.addEventListener('click', (e) => { e.stopPropagation(); removeMealFromDay(m.id, dayIdx); });
+    }
     list.appendChild(item);
   });
+
+  if (isOwner) {
+    const controls = document.createElement('div');
+    controls.className = 'meal-day-controls';
+    if (eff.custom) {
+      controls.innerHTML = `
+        <div class="meal-add-row">
+          <select class="form-input" id="mpAddSlot">${MEAL_PLAN_SLOTS.map(s => `<option>${s}</option>`).join('')}</select>
+          <select class="form-input" id="mpAddRecipe">${recipeOptionsHtml()}</select>
+          <button class="btn-primary" id="mpAddBtn" type="button">Add</button>
+        </div>
+        <button class="btn-secondary" id="mpResetBtn" type="button" style="margin-top:8px;font-size:0.75rem;padding:6px 12px">Reset day to template</button>`;
+      list.appendChild(controls);
+      controls.querySelector('#mpAddBtn').addEventListener('click', () => addMealToDay(dayIdx));
+      controls.querySelector('#mpResetBtn').addEventListener('click', () => resetDayToTemplate(dayIdx));
+    } else if (tmpl) {
+      controls.innerHTML = `<button class="btn-secondary" id="mpCustomizeBtn" type="button" style="font-size:0.75rem;padding:6px 12px">Customize this day</button>`;
+      list.appendChild(controls);
+      controls.querySelector('#mpCustomizeBtn').addEventListener('click', () => materializeDay(dayIdx));
+    }
+  }
+}
+
+// Copy the standing template for a date into editable Meal Plan rows.
+async function materializeDay(dayIdx) {
+  if (currentRole === 'trainer') return;
+  const dateStr = mealDateStr(dayIdx);
+  if (cache.mealPlan.some(p => p.date === dateStr)) { renderMeals(dayIdx); return; }
+  const tmpl = MEALS[dayIdx];
+  if (!tmpl) return;
+  let snackCount = 0;
+  const rows = tmpl.meals.map(m => ({
+    slot: plannedSlot(m.time, m.time === 'Snack' ? snackCount++ : 0),
+    meal: m.name, calories: parseCals(m.cals), ingredients: m.ingredients || [], steps: m.steps || '',
+  }));
+  try {
+    for (const r of rows) {
+      const result = await atCreate(AT.tables.mealPlan, {
+        'Date': dateStr, 'Slot': r.slot, 'Meal': r.meal, 'Calories': r.calories, 'Ingredients': r.ingredients.join('\n'), 'Steps': r.steps,
+      });
+      cache.mealPlan.push({ id: result.records[0].id, date: dateStr, slot: r.slot, meal: r.meal, calories: r.calories, ingredients: [...r.ingredients], steps: r.steps });
+    }
+    renderMeals(dayIdx);
+    renderGrocery();
+  } catch (e) { alert('Could not customize this day.'); console.error(e); }
+}
+
+async function addMealToDay(dayIdx) {
+  if (currentRole === 'trainer') return;
+  const slotEl = document.getElementById('mpAddSlot');
+  const recEl = document.getElementById('mpAddRecipe');
+  if (!slotEl || !recEl) return;
+  const slot = slotEl.value;
+  const recipe = cache.recipes.find(r => r.id === recEl.value);
+  if (!recipe) { alert('Add a recipe to your library first, then pick it here.'); return; }
+  const dateStr = mealDateStr(dayIdx);
+  const btn = document.getElementById('mpAddBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  try {
+    const result = await atCreate(AT.tables.mealPlan, {
+      'Date': dateStr, 'Slot': slot, 'Meal': recipe.name, 'Calories': recipe.calories, 'Ingredients': recipe.ingredients.join('\n'), 'Steps': recipe.steps,
+    });
+    cache.mealPlan.push({ id: result.records[0].id, date: dateStr, slot, meal: recipe.name, calories: recipe.calories, ingredients: [...recipe.ingredients], steps: recipe.steps });
+    renderMeals(dayIdx);
+    renderGrocery();
+  } catch (e) { alert('Could not add the meal.'); console.error(e); if (btn) { btn.disabled = false; btn.textContent = 'Add'; } }
+}
+
+async function swapMeal(rowId, recipeId) {
+  if (currentRole === 'trainer') return;
+  const row = cache.mealPlan.find(p => p.id === rowId);
+  const recipe = cache.recipes.find(r => r.id === recipeId);
+  if (!row || !recipe) return;
+  try {
+    await atUpdate(AT.tables.mealPlan, rowId, {
+      'Meal': recipe.name, 'Calories': recipe.calories, 'Ingredients': recipe.ingredients.join('\n'), 'Steps': recipe.steps,
+    });
+    row.meal = recipe.name; row.calories = recipe.calories; row.ingredients = [...recipe.ingredients]; row.steps = recipe.steps;
+    renderMeals(selectedMealDay);
+    renderGrocery();
+  } catch (e) { alert('Could not swap the meal.'); console.error(e); }
+}
+
+async function removeMealFromDay(rowId, dayIdx) {
+  if (currentRole === 'trainer') return;
+  try {
+    await atDelete(AT.tables.mealPlan, rowId);
+    cache.mealPlan = cache.mealPlan.filter(p => p.id !== rowId);
+    renderMeals(dayIdx);
+    renderGrocery();
+  } catch (e) { alert('Could not remove the meal.'); console.error(e); }
+}
+
+async function resetDayToTemplate(dayIdx) {
+  if (currentRole === 'trainer') return;
+  const dateStr = mealDateStr(dayIdx);
+  const rows = cache.mealPlan.filter(p => p.date === dateStr);
+  if (!rows.length) return;
+  if (!confirm('Reset this day back to your standing meal template? The custom meals for this day will be removed.')) return;
+  try {
+    for (const r of rows) { await atDelete(AT.tables.mealPlan, r.id); }
+    cache.mealPlan = cache.mealPlan.filter(p => p.date !== dateStr);
+    renderMeals(dayIdx);
+    renderGrocery();
+  } catch (e) { alert('Could not reset the day.'); console.error(e); }
 }
 
 // Running calorie total vs. the daily goal.
@@ -3342,7 +3536,7 @@ async function startApp() {
   currentWeekOffset = Math.max(0, Math.floor(diffDays / 7));
 
   // Load data from Airtable
-  await Promise.all([loadWorkoutLogs(), loadBodyLogs(), loadMealLogs(), loadPainWinLogs(), loadLibraries(), loadWorkoutGroups(), loadGroceryExtras(), loadRecipes(), loadPlan(), loadPoints(), loadTrips()]);
+  await Promise.all([loadWorkoutLogs(), loadBodyLogs(), loadMealLogs(), loadPainWinLogs(), loadLibraries(), loadWorkoutGroups(), loadGroceryExtras(), loadRecipes(), loadMealPlan(), loadPlan(), loadPoints(), loadTrips()]);
 
   const today = new Date().getDay();
   renderPhases();
