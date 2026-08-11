@@ -336,6 +336,27 @@ body.trainer-mode .owner-only { display: none !important; }
 .plan-item { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
 .plan-ex { flex: 1; font-size: 0.875rem; font-weight: 500; }
 
+/* ===== SAVED WORKOUTS (groups) ===== */
+.wg-builder-list { margin: 0 0 12px; }
+.wg-builder-list:empty { display: none; }
+.wg-chip {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin-bottom: 6px;
+  background: var(--accent-wash); border-radius: 8px; font-size: 0.8125rem; font-weight: 500;
+}
+.wg-chip span { flex: 1; }
+.wg-group { padding: 12px 16px; border-bottom: 1px solid var(--border-light); }
+.wg-group:last-child { border-bottom: none; }
+.wg-group-head { display: flex; align-items: center; gap: 10px; }
+.wg-group-name { flex: 1; font-size: 0.9375rem; font-weight: 700; }
+.wg-group-ex { font-size: 0.75rem; color: var(--muted); margin: 6px 0 10px; line-height: 1.5; }
+.wg-add-row { display: flex; gap: 8px; align-items: center; }
+.wg-add-row select { flex: 1; }
+.wg-group-label {
+  font-size: 0.625rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--accent); background: var(--accent-wash); padding: 1px 6px; border-radius: 4px;
+  display: inline-block; margin-bottom: 4px;
+}
+
 /* ===== POINTS + REWARDS ===== */
 .points-hero { text-align: center; padding: 20px 16px 8px; }
 .points-num { font-size: 2.5rem; font-weight: 700; line-height: 1; color: var(--accent); }
@@ -810,6 +831,35 @@ body.trainer-mode .owner-only { display: none !important; }
       <div id="planSlots" style="padding-bottom:8px"></div>
     </div>
 
+    <!-- Saved workouts (grouped exercises) -->
+    <div class="card">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <span>My workouts</span>
+        <button class="btn-secondary owner-only" onclick="toggleAddWorkoutGroup()" style="font-size:0.75rem;padding:5px 10px">+ New</button>
+      </div>
+      <div class="card hidden owner-only" id="addWorkoutGroupCard" style="box-shadow:none;margin:0">
+        <div class="add-form">
+          <div class="form-row">
+            <label class="form-label">Workout name</label>
+            <input type="text" class="form-input" id="wgName" placeholder="e.g. Quick workout">
+          </div>
+          <div class="form-row">
+            <label class="form-label">Add exercises</label>
+            <div style="display:flex;gap:8px">
+              <select class="form-input" id="wgExSel" style="flex:1"></select>
+              <button class="btn-secondary" type="button" onclick="addExToGroupBuilder()" style="flex-shrink:0">Add</button>
+            </div>
+          </div>
+          <div id="wgBuilderList" class="wg-builder-list"></div>
+          <div class="form-actions">
+            <button class="btn-secondary" onclick="toggleAddWorkoutGroup()">Cancel</button>
+            <button class="btn-primary" id="saveWorkoutGroupBtn" onclick="saveWorkoutGroup()">Save workout</button>
+          </div>
+        </div>
+      </div>
+      <div id="workoutGroupsList"></div>
+    </div>
+
     <!-- Travel mode: trips -->
     <div class="card">
       <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
@@ -912,6 +962,7 @@ const AT = {
     painPoints: 'tblbEbNBWwyG0Xjyp',
     foodLib: 'tblPpAAwaN7xPg6TL',
     exerciseLib: 'tbl9hpnEgXyGFiT2K',
+    workoutGroups: 'tblSibZ7BT7KCx82r',
     weeklyPlan: 'tblsT9fE1mmBSAW48',
     rewards: 'tblSpV3vhrVkVf4xQ',
     trips: 'tbltsZezA5Npw03K4',
@@ -994,7 +1045,8 @@ const cache = {
   winLogs: [],       // [{id, when, win}]
   foods: [],         // [{id, name, slots, cals, prepped, favorite, notes}]
   exercises: [],     // [{id, name, category, unit, qty, slots, points, painPoints, equipment, howto, favorite}]
-  plan: [],          // [{id, date, slot, exercise, source}]
+  workoutGroups: [], // [{id, name, exercises:[name,...]}]  saved workout groupings
+  plan: [],          // [{id, date, slot, exercise, source, group}]
   rewardsLedger: [], // [{id, date, type, points, reason}]
   points: { earned: 0, redeemed: 0, workoutsDone: 0, winCount: 0, mealsOnPlan: 0 },
   trips: [],         // [{id, dest, start, end, equipment, notes}]
@@ -1110,6 +1162,21 @@ async function loadLibraries() {
   }
 }
 
+async function loadWorkoutGroups() {
+  try {
+    const data = await atFetch(AT.tables.workoutGroups, { pageSize: 100 });
+    cache.workoutGroups = data.records.map(r => ({
+      id: r.id,
+      name: r.fields['Name'] || '',
+      exercises: (r.fields['Exercises'] || '')
+        .split('\n').map(s => s.trim()).filter(Boolean),
+    }));
+    cache.workoutGroups.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  } catch (e) {
+    console.error('Failed to load workout groups:', e);
+  }
+}
+
 async function loadPlan() {
   try {
     const weekStart = getWeekStart(currentWeekOffset);
@@ -1118,7 +1185,7 @@ async function loadPlan() {
     const formula = `AND(IS_AFTER({Date}, '${fmtDate(new Date(weekStart.getTime() - 86400000))}'), IS_BEFORE({Date}, '${fmtDate(weekEnd)}'))`;
     const data = await atFetch(AT.tables.weeklyPlan, { filterByFormula: formula, pageSize: 100 });
     cache.plan = data.records.map(r => ({
-      id: r.id, date: r.fields['Date'], slot: r.fields['Slot'] || '', exercise: r.fields['Exercise'] || '', source: r.fields['Source'] || 'Self-picked',
+      id: r.id, date: r.fields['Date'], slot: r.fields['Slot'] || '', exercise: r.fields['Exercise'] || '', source: r.fields['Source'] || 'Self-picked', group: r.fields['Group'] || '',
     }));
   } catch (e) {
     console.error('Failed to load plan:', e);
@@ -2124,27 +2191,160 @@ function renderPlan(dayIdx) {
   const header = document.getElementById('planDayHeader');
   if (header) header.textContent = DAY_FULL[dayIdx] + "'s plan";
 
-  // Populate the exercise picker from the library.
+  // Populate the exercise pickers (single-add + workout builder) from the library.
+  const exOptions = cache.exercises.length
+    ? cache.exercises.map(x => `<option>${x.name}</option>`).join('')
+    : '<option value="">Add exercises to your library first</option>';
   const exSel = document.getElementById('planExSel');
-  if (exSel) {
-    exSel.innerHTML = cache.exercises.length
-      ? cache.exercises.map(x => `<option>${x.name}</option>`).join('')
-      : '<option value="">Add exercises to your library first</option>';
-  }
+  if (exSel) exSel.innerHTML = exOptions;
+  const wgSel = document.getElementById('wgExSel');
+  if (wgSel) wgSel.innerHTML = exOptions;
 
   const container = document.getElementById('planSlots');
-  if (!container) return;
-  const slots = ['Morning', 'Midday', 'Evening'];
-  container.innerHTML = slots.map(slot => {
-    const items = cache.plan.filter(p => p.date === dateStr && p.slot === slot);
-    const rows = items.length
-      ? items.map(p => `
-        <div class="plan-item">
+  if (container) {
+    const slots = ['Morning', 'Midday', 'Evening'];
+    container.innerHTML = slots.map(slot => {
+      const items = cache.plan.filter(p => p.date === dateStr && p.slot === slot);
+      let lastGroup = null;
+      const rows = items.length
+        ? items.map(p => {
+            const label = (p.group && p.group !== lastGroup)
+              ? `<div class="plan-group-label">${p.group}</div>` : '';
+            lastGroup = p.group || null;
+            return `${label}<div class="plan-item">
           <span class="plan-ex">${p.exercise}</span>
           <button class="extra-del owner-only" onclick="deletePlanItem('${p.id}')" title="Remove">&times;</button>
-        </div>`).join('')
-      : '<div class="ql-empty">Nothing planned.</div>';
-    return `<div class="plan-slot"><div class="plan-slot-label">${slot}</div>${rows}</div>`;
+        </div>`;
+          }).join('')
+        : '<div class="ql-empty">Nothing planned.</div>';
+      return `<div class="plan-slot"><div class="plan-slot-label">${slot}</div>${rows}</div>`;
+    }).join('');
+  }
+
+  renderWorkoutGroups();
+}
+
+// ============================================================
+// SAVED WORKOUTS (grouped exercises)
+// ============================================================
+let groupBuilder = [];  // exercise names being assembled into a new workout
+
+function toggleAddWorkoutGroup() {
+  const card = document.getElementById('addWorkoutGroupCard');
+  if (!card) return;
+  const opening = card.classList.contains('hidden');
+  card.classList.toggle('hidden');
+  if (opening) {
+    // Fresh start each time the builder opens.
+    groupBuilder = [];
+    const nameEl = document.getElementById('wgName');
+    if (nameEl) nameEl.value = '';
+    renderGroupBuilder();
+  }
+}
+
+function addExToGroupBuilder() {
+  const sel = document.getElementById('wgExSel');
+  const name = sel ? sel.value : '';
+  if (!name) { alert('Add some exercises to your library first.'); return; }
+  if (groupBuilder.includes(name)) return;  // no duplicates within a workout
+  groupBuilder.push(name);
+  renderGroupBuilder();
+}
+
+function removeExFromGroupBuilder(idx) {
+  groupBuilder.splice(idx, 1);
+  renderGroupBuilder();
+}
+
+function renderGroupBuilder() {
+  const list = document.getElementById('wgBuilderList');
+  if (!list) return;
+  list.innerHTML = groupBuilder.map((name, i) => `
+    <div class="wg-chip">
+      <span>${name}</span>
+      <button class="extra-del" onclick="removeExFromGroupBuilder(${i})" title="Remove">&times;</button>
+    </div>`).join('');
+}
+
+async function saveWorkoutGroup() {
+  if (currentRole === 'trainer') return;
+  const btn = document.getElementById('saveWorkoutGroupBtn');
+  const name = document.getElementById('wgName').value.trim();
+  if (!name) { alert('Give the workout a name.'); return; }
+  if (!groupBuilder.length) { alert('Add at least one exercise to the workout.'); return; }
+  btn.disabled = true; btn.textContent = 'Saving...';
+  try {
+    const fields = { 'Name': name, 'Exercises': groupBuilder.join('\n') };
+    const result = await atCreate(AT.tables.workoutGroups, fields);
+    cache.workoutGroups.push({ id: result.records[0].id, name, exercises: [...groupBuilder] });
+    cache.workoutGroups.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    groupBuilder = [];
+    toggleAddWorkoutGroup();
+    renderWorkoutGroups();
+  } catch (e) {
+    alert('Could not save the workout.'); console.error(e);
+  } finally { btn.disabled = false; btn.textContent = 'Save workout'; }
+}
+
+async function deleteWorkoutGroup(id) {
+  if (currentRole === 'trainer') return;
+  const g = cache.workoutGroups.find(x => x.id === id);
+  if (!g) return;
+  if (!confirm(`Delete the "${g.name}" workout? This won't touch anything already added to a day.`)) return;
+  try {
+    await atDelete(AT.tables.workoutGroups, id);
+    cache.workoutGroups = cache.workoutGroups.filter(x => x.id !== id);
+    renderWorkoutGroups();
+  } catch (e) { alert('Could not delete the workout.'); console.error(e); }
+}
+
+async function addGroupToDay(id) {
+  if (currentRole === 'trainer') return;
+  const g = cache.workoutGroups.find(x => x.id === id);
+  if (!g) return;
+  if (!g.exercises.length) { alert('This workout has no exercises yet.'); return; }
+  const slotSel = document.getElementById('wgSlot-' + id);
+  const slot = slotSel ? slotSel.value : 'Morning';
+  const btn = document.getElementById('wgAdd-' + id);
+  const dateStr = fmtDate(getDateForDay(getWeekStart(currentWeekOffset), selectedPlanDay));
+  if (btn) { btn.disabled = true; btn.textContent = 'Adding...'; }
+  try {
+    for (const exName of g.exercises) {
+      const result = await atCreate(AT.tables.weeklyPlan, {
+        'Date': dateStr, 'Slot': slot, 'Exercise': exName, 'Source': 'Self-picked', 'Group': g.name,
+      });
+      cache.plan.push({ id: result.records[0].id, date: dateStr, slot, exercise: exName, source: 'Self-picked', group: g.name });
+    }
+    renderPlan(selectedPlanDay);
+  } catch (e) {
+    alert('Could not add the workout to your day.'); console.error(e);
+    if (btn) { btn.disabled = false; btn.textContent = 'Add to day'; }
+  }
+}
+
+function renderWorkoutGroups() {
+  const list = document.getElementById('workoutGroupsList');
+  if (!list) return;
+  if (!cache.workoutGroups.length) {
+    list.innerHTML = '<div class="ql-empty" style="padding:16px 16px 20px">No saved workouts yet. Tap &ldquo;+ New&rdquo; to build one from your library.</div>';
+    return;
+  }
+  list.innerHTML = cache.workoutGroups.map(g => {
+    const exList = g.exercises.length ? g.exercises.join(' &middot; ') : 'No exercises yet';
+    return `<div class="wg-group">
+      <div class="wg-group-head">
+        <div class="wg-group-name">${g.name}</div>
+        <button class="extra-del owner-only" onclick="deleteWorkoutGroup('${g.id}')" title="Delete workout">&times;</button>
+      </div>
+      <div class="wg-group-ex">${exList}</div>
+      <div class="wg-add-row owner-only">
+        <select class="form-input" id="wgSlot-${g.id}">
+          <option>Morning</option><option>Midday</option><option>Evening</option>
+        </select>
+        <button class="btn-primary" id="wgAdd-${g.id}" onclick="addGroupToDay('${g.id}')">Add to day</button>
+      </div>
+    </div>`;
   }).join('');
 }
 
@@ -2728,7 +2928,7 @@ async function startApp() {
   currentWeekOffset = Math.max(0, Math.floor(diffDays / 7));
 
   // Load data from Airtable
-  await Promise.all([loadWorkoutLogs(), loadBodyLogs(), loadMealLogs(), loadPainWinLogs(), loadLibraries(), loadPlan(), loadPoints(), loadTrips()]);
+  await Promise.all([loadWorkoutLogs(), loadBodyLogs(), loadMealLogs(), loadPainWinLogs(), loadLibraries(), loadWorkoutGroups(), loadPlan(), loadPoints(), loadTrips()]);
 
   const today = new Date().getDay();
   renderPhases();
