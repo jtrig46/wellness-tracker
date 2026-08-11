@@ -353,6 +353,22 @@ body.trainer-mode .owner-only { display: none !important; }
   border-radius: 8px; font-size: 0.75rem; font-weight: 600; cursor: pointer; font-family: inherit;
 }
 .reward-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ===== TRAVEL MODE ===== */
+.travel-banner {
+  background: var(--orange-wash); border: 1px solid var(--orange);
+  border-radius: var(--radius); padding: 14px 16px; margin: 12px 0;
+}
+.travel-head { font-size: 0.9375rem; font-weight: 700; color: var(--orange); }
+.travel-sub { font-size: 0.75rem; color: var(--text2); margin: 2px 0 8px; }
+.travel-moves .plan-item { padding: 5px 0; }
+.trip-tag {
+  font-size: 0.5625rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 1px 6px; border-radius: 4px; margin-left: 4px; vertical-align: middle;
+}
+.trip-tag.now { color: var(--green); background: var(--green-wash); }
+.trip-tag.soon { color: var(--accent); background: var(--accent-wash); }
+.trip-tag.past { color: var(--muted); background: var(--border-light); }
 .extra-del {
   background: none; border: none; color: var(--muted); font-size: 1.375rem;
   line-height: 1; cursor: pointer; padding: 0 4px; flex-shrink: 0;
@@ -505,6 +521,8 @@ body.trainer-mode .owner-only { display: none !important; }
       <div class="week-nav" id="weekNav"></div>
       <div class="cal-strip" id="workoutCalStrip"></div>
     </div>
+
+    <div id="travelBanner"></div>
 
     <div class="card" id="workoutCard">
       <div class="card-header" id="workoutDayHeader"></div>
@@ -791,6 +809,39 @@ body.trainer-mode .owner-only { display: none !important; }
       <div class="card-header" id="planDayHeader"></div>
       <div id="planSlots" style="padding-bottom:8px"></div>
     </div>
+
+    <!-- Travel mode: trips -->
+    <div class="card">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <span>Travel</span>
+        <button class="btn-secondary owner-only" onclick="toggleAddTrip()" style="font-size:0.75rem;padding:5px 10px">+ Add trip</button>
+      </div>
+      <div class="card hidden" id="addTripCard" style="box-shadow:none;margin:0">
+        <div class="add-form">
+          <div class="form-row">
+            <label class="form-label">Destination</label>
+            <input type="text" class="form-input" id="tripDest" placeholder="e.g. Scotland">
+          </div>
+          <div class="form-row">
+            <label class="form-label">Start</label>
+            <input type="date" class="form-input" id="tripStart">
+          </div>
+          <div class="form-row">
+            <label class="form-label">End</label>
+            <input type="date" class="form-input" id="tripEnd">
+          </div>
+          <div class="form-row" style="display:flex;align-items:center;gap:8px">
+            <input type="checkbox" id="tripEquip" style="width:18px;height:18px">
+            <label class="form-label" for="tripEquip" style="margin:0">Equipment / gym available there</label>
+          </div>
+          <div class="form-actions">
+            <button class="btn-secondary" onclick="toggleAddTrip()">Cancel</button>
+            <button class="btn-primary" id="saveTripBtn" onclick="saveTrip()">Save trip</button>
+          </div>
+        </div>
+      </div>
+      <div id="tripsList"></div>
+    </div>
   </div>
 
 </div>
@@ -863,6 +914,7 @@ const AT = {
     exerciseLib: 'tbl9hpnEgXyGFiT2K',
     weeklyPlan: 'tblsT9fE1mmBSAW48',
     rewards: 'tblSpV3vhrVkVf4xQ',
+    trips: 'tbltsZezA5Npw03K4',
   },
   _token: null,
   get token() { return this._token || localStorage.getItem('at_token'); },
@@ -945,6 +997,7 @@ const cache = {
   plan: [],          // [{id, date, slot, exercise, source}]
   rewardsLedger: [], // [{id, date, type, points, reason}]
   points: { earned: 0, redeemed: 0, workoutsDone: 0, winCount: 0, mealsOnPlan: 0 },
+  trips: [],         // [{id, dest, start, end, equipment, notes}]
 };
 
 async function loadWorkoutLogs() {
@@ -1092,6 +1145,18 @@ async function loadPoints() {
     cache.points = { earned, redeemed, workoutsDone, winCount, mealsOnPlan };
   } catch (e) {
     console.error('Failed to load points:', e);
+  }
+}
+
+async function loadTrips() {
+  try {
+    const data = await atFetch(AT.tables.trips, { sort: encodeURIComponent('[{"field":"Start","direction":"asc"}]'), pageSize: 100 });
+    cache.trips = data.records.map(r => ({
+      id: r.id, dest: r.fields['Destination'] || '', start: r.fields['Start'] || '', end: r.fields['End'] || '',
+      equipment: r.fields['Equipment'] || false, notes: r.fields['Notes'] || '',
+    }));
+  } catch (e) {
+    console.error('Failed to load trips:', e);
   }
 }
 
@@ -2134,6 +2199,120 @@ function renderRewards() {
 }
 
 // ============================================================
+// TRAVEL MODE
+// ============================================================
+function toggleAddTrip() {
+  document.getElementById('addTripCard').classList.toggle('hidden');
+}
+
+async function saveTrip() {
+  if (currentRole === 'trainer') return;
+  const btn = document.getElementById('saveTripBtn');
+  const dest = document.getElementById('tripDest').value.trim();
+  const start = document.getElementById('tripStart').value;
+  const end = document.getElementById('tripEnd').value;
+  const equipment = document.getElementById('tripEquip').checked;
+  if (!dest || !start || !end) { alert('Add a destination and both dates.'); return; }
+  if (end < start) { alert('End date is before the start date.'); return; }
+  btn.disabled = true; btn.textContent = 'Saving...';
+  try {
+    const result = await atCreate(AT.tables.trips, { 'Destination': dest, 'Start': start, 'End': end, 'Equipment': equipment });
+    cache.trips.push({ id: result.records[0].id, dest, start, end, equipment, notes: '' });
+    cache.trips.sort((a, b) => (a.start || '').localeCompare(b.start || ''));
+    document.getElementById('tripDest').value = '';
+    document.getElementById('tripStart').value = '';
+    document.getElementById('tripEnd').value = '';
+    document.getElementById('tripEquip').checked = false;
+    toggleAddTrip();
+    renderTrips();
+    renderWorkouts(selectedWorkoutDay); // refresh travel banner
+  } catch (e) {
+    alert('Could not save the trip.'); console.error(e);
+  } finally { btn.disabled = false; btn.textContent = 'Save trip'; }
+}
+
+async function deleteTrip(id) {
+  if (currentRole === 'trainer') return;
+  try {
+    await atDelete(AT.tables.trips, id);
+    cache.trips = cache.trips.filter(t => t.id !== id);
+    renderTrips();
+    renderWorkouts(selectedWorkoutDay);
+  } catch (e) { console.error('Delete trip failed:', e); }
+}
+
+// The trip (if any) whose date range includes the given YYYY-MM-DD.
+function getActiveTrip(dateStr) {
+  return cache.trips.find(t => t.start && t.end && dateStr >= t.start && dateStr <= t.end) || null;
+}
+
+// Travel-friendly moves from the library. With no equipment, drop
+// structured workouts and anything that needs gear.
+function travelMoves(trip) {
+  return cache.exercises.filter(x => {
+    if (trip.equipment) return true;
+    if (x.category === 'Structured workout') return false;
+    if (x.equipment && String(x.equipment).trim()) return false;
+    return true;
+  });
+}
+
+async function planTravelMove(btn, name, dateStr) {
+  if (currentRole === 'trainer') return;
+  try {
+    const result = await atCreate(AT.tables.weeklyPlan, { 'Date': dateStr, 'Slot': 'Morning', 'Exercise': name, 'Source': 'Adopted' });
+    cache.plan.push({ id: result.records[0].id, date: dateStr, slot: 'Morning', exercise: name, source: 'Adopted' });
+    if (btn) { btn.textContent = 'Added'; btn.disabled = true; }
+  } catch (e) { alert('Could not add to plan.'); console.error(e); }
+}
+
+function renderTravelBanner(dayIdx) {
+  const el = document.getElementById('travelBanner');
+  if (!el) return;
+  const dateStr = fmtDate(getDateForDay(getWeekStart(currentWeekOffset), dayIdx));
+  const trip = getActiveTrip(dateStr);
+  if (!trip) { el.innerHTML = ''; return; }
+  const moves = travelMoves(trip);
+  const movesHtml = moves.length
+    ? moves.slice(0, 8).map(x => `
+        <div class="plan-item">
+          <span class="plan-ex">${x.name}</span>
+          <button class="lib-log-btn owner-only" onclick="planTravelMove(this, '${x.name.replace(/'/g, "\\'")}', '${dateStr}')">Add</button>
+        </div>`).join('')
+    : '<div class="ql-empty" style="padding:8px 0 0">Add some no-equipment moves to your Exercise Library and they\'ll show up here.</div>';
+  el.innerHTML = `
+    <div class="travel-banner">
+      <div class="travel-head">✈️ Travel mode — ${trip.dest}</div>
+      <div class="travel-sub">${trip.equipment ? 'Equipment available — full rotation is fine.' : 'No equipment — lighter, walk-and-stretch focus.'}</div>
+      <div class="travel-moves">${movesHtml}</div>
+    </div>`;
+}
+
+function renderTrips() {
+  const list = document.getElementById('tripsList');
+  if (!list) return;
+  if (!cache.trips.length) {
+    list.innerHTML = '<div class="ql-empty" style="padding:12px 16px">No trips yet. Add one and days inside it switch to a lighter travel plan.</div>';
+    return;
+  }
+  const todayStr = fmtDate(new Date());
+  list.innerHTML = cache.trips.map(t => {
+    let status = '';
+    if (t.end < todayStr) status = '<span class="trip-tag past">past</span>';
+    else if (t.start <= todayStr && todayStr <= t.end) status = '<span class="trip-tag now">now</span>';
+    else status = '<span class="trip-tag soon">upcoming</span>';
+    return `
+      <div class="lib-item">
+        <div class="lib-info">
+          <div class="lib-name">✈️ ${t.dest} ${status}</div>
+          <div class="lib-meta">${t.start} → ${t.end} · ${t.equipment ? 'equipment available' : 'no equipment'}</div>
+        </div>
+        <button class="extra-del owner-only" onclick="deleteTrip('${t.id}')" title="Remove">&times;</button>
+      </div>`;
+  }).join('');
+}
+
+// ============================================================
 // RENDERING
 // ============================================================
 function renderPhases() {
@@ -2217,6 +2396,7 @@ function renderCalStrip(containerId, selectedDay, onSelect) {
 function renderWorkouts(dayIdx) {
   selectedWorkoutDay = dayIdx;
   renderCalStrip('workoutCalStrip', dayIdx, d => renderWorkouts(d));
+  renderTravelBanner(dayIdx);
   const phase = getCurrentPhase();
   const workouts = WORKOUTS[phase] ? (WORKOUTS[phase][dayIdx] || []) : [];
   document.getElementById('workoutDayHeader').textContent = DAY_FULL[dayIdx] + "'s plan";
@@ -2548,7 +2728,7 @@ async function startApp() {
   currentWeekOffset = Math.max(0, Math.floor(diffDays / 7));
 
   // Load data from Airtable
-  await Promise.all([loadWorkoutLogs(), loadBodyLogs(), loadMealLogs(), loadPainWinLogs(), loadLibraries(), loadPlan(), loadPoints()]);
+  await Promise.all([loadWorkoutLogs(), loadBodyLogs(), loadMealLogs(), loadPainWinLogs(), loadLibraries(), loadPlan(), loadPoints(), loadTrips()]);
 
   const today = new Date().getDay();
   renderPhases();
@@ -2563,6 +2743,7 @@ async function startApp() {
   renderExerciseLibrary();
   renderPlan(today);
   renderRewards();
+  renderTrips();
 }
 
 // Auth state listener (above) handles showing the right screen on load.
