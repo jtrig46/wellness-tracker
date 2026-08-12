@@ -1377,7 +1377,7 @@ const PHASES = [
   { name: 'Phase 3: Running', weeks: '9-12', desc: 'Walk-run intervals', status: 'locked' },
 ];
 
-const PROGRAM_START = new Date('2026-08-10');
+const PROGRAM_START = new Date(2026, 7, 10); // local midnight (month is 0-indexed), so date math matches fmtDate's local dates
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const DAY_FULL = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 
@@ -1590,8 +1590,14 @@ let selectedMealDay = new Date().getDay();
 // ============================================================
 // HELPERS
 // ============================================================
+// Format a Date as YYYY-MM-DD in the phone's LOCAL time zone (not UTC), so
+// "today", the week grid, logging, and the streak all follow wherever the
+// phone currently is. When you travel, the OS switches zones and this follows.
 function fmtDate(d) {
-  return d.toISOString().split('T')[0];
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function getWeekStart(offset) {
@@ -1844,13 +1850,12 @@ function isWorkoutCompleted(dayIdx, workoutId) {
 }
 
 function getCompletedCountThisWeek() {
-  const weekStart = getWeekStart(currentWeekOffset);
-  const weekEnd = new Date(weekStart);
+  const startStr = fmtDate(getWeekStart(currentWeekOffset));
+  const weekEnd = getWeekStart(currentWeekOffset);
   weekEnd.setDate(weekEnd.getDate() + 7);
-  return cache.workoutLogs.filter(l => {
-    const d = new Date(l.date);
-    return d >= weekStart && d < weekEnd && l.completed;
-  }).length;
+  const endStr = fmtDate(weekEnd);
+  // Compare YYYY-MM-DD strings so this doesn't depend on how a date string parses.
+  return cache.workoutLogs.filter(l => l.date && l.date >= startStr && l.date < endStr && l.completed).length;
 }
 
 function getStreakDays() {

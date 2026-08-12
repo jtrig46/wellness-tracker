@@ -1,4 +1,4 @@
-const CACHE = 'wellness-v11';
+const CACHE = 'wellness-v12';
 const ASSETS = ['./index.html', './manifest.json'];
 
 self.addEventListener('install', e => {
