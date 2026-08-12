@@ -903,6 +903,7 @@ body.trainer-mode .owner-only { display: none !important; }
           </select>
         </div>
         <div class="form-actions">
+          <button class="btn-secondary" onclick="addPlanItemEveryDay()">Add to every day</button>
           <button class="btn-primary" onclick="addPlanItem()">Add to day</button>
         </div>
       </div>
@@ -2306,6 +2307,7 @@ async function saveExercise() {
     }
     toggleAddExercise();  // closes the card and resets the form
     renderExerciseLibrary();
+    renderPlan(selectedPlanDay);  // keep the plan's exercise picker in sync
   } catch (e) {
     alert(isEdit ? 'Could not update the exercise.' : 'Could not save the exercise.'); console.error(e);
     btn.textContent = isEdit ? 'Update exercise' : 'Save exercise';
@@ -2318,6 +2320,7 @@ async function deleteExercise(id) {
     await atDelete(AT.tables.exerciseLib, id);
     cache.exercises = cache.exercises.filter(x => x.id !== id);
     renderExerciseLibrary();
+    renderPlan(selectedPlanDay);  // keep the plan's exercise picker in sync
   } catch (e) { console.error('Delete exercise failed:', e); }
 }
 
@@ -2359,6 +2362,28 @@ async function addPlanItem() {
     cache.plan.push({ id: result.records[0].id, date: dateStr, slot, exercise, source: 'Self-picked' });
     renderPlan(selectedPlanDay);
   } catch (e) { alert('Could not add to plan.'); console.error(e); }
+}
+
+// Add the picked exercise to every day of the shown week, in the chosen slot.
+// Skips any day that already has this exercise in that slot.
+async function addPlanItemEveryDay() {
+  if (currentRole === 'trainer') return;
+  const slot = document.getElementById('planSlotSel').value;
+  const exercise = document.getElementById('planExSel').value;
+  if (!exercise) { alert('Add some exercises to your library first, then pick one here.'); return; }
+  const weekStart = getWeekStart(currentWeekOffset);
+  let added = 0;
+  try {
+    for (let d = 0; d < 7; d++) {
+      const dateStr = fmtDate(getDateForDay(weekStart, d));
+      if (cache.plan.some(p => p.date === dateStr && p.slot === slot && p.exercise === exercise)) continue;
+      const result = await atCreate(AT.tables.weeklyPlan, { 'Date': dateStr, 'Slot': slot, 'Exercise': exercise, 'Source': 'Self-picked' });
+      cache.plan.push({ id: result.records[0].id, date: dateStr, slot, exercise, source: 'Self-picked' });
+      added++;
+    }
+    renderPlan(selectedPlanDay);
+    if (!added) alert(`"${exercise}" is already on every day this week for ${slot}.`);
+  } catch (e) { alert('Could not add to every day.'); console.error(e); }
 }
 
 async function deletePlanItem(id) {
@@ -3518,7 +3543,14 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-page').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
-    document.getElementById('page-' + btn.dataset.tab).classList.add('active');
+    const tab = btn.dataset.tab;
+    document.getElementById('page-' + tab).classList.add('active');
+    // Re-render the tab being opened so it reflects the latest data (e.g. a
+    // newly added library exercise showing up in the plan picker).
+    if (tab === 'workout') renderWorkouts(selectedWorkoutDay);
+    else if (tab === 'meals') renderMeals(selectedMealDay);
+    else if (tab === 'progress') renderProgress();
+    else if (tab === 'plan') renderPlan(selectedPlanDay);
   });
 });
 
